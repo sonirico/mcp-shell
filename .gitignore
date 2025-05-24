@@ -21,6 +21,9 @@ go.work
 bin/
 dist/
 
+# Environment files
+.env
+
 # IDE files
 .vscode/
 .idea/

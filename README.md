@@ -8,19 +8,23 @@ This tool creates a bridge between AI systems and your shell environment through
 
 ## Features
 
-- **Full Shell Access**: Execute any shell command with complete system access
-- **Structured Responses**: JSON-formatted output with stdout, stderr, exit codes, and status
-- **Binary Data Support**: Optional base64 encoding for handling binary command output
-- **Error Handling**: Proper exit code detection and error status reporting
-- **Context Aware**: Supports command execution with proper context cancellation
-- **Security Conscious**: Transparent about providing full system access
+- **🔒 Security First**: Configurable command allowlists, blocklists, and execution constraints
+- **🐳 Docker Ready**: Lightweight Alpine-based container for secure isolation
+- **📊 Structured Responses**: JSON-formatted output with stdout, stderr, exit codes, and execution metadata
+- **🔄 Binary Data Support**: Optional base64 encoding for handling binary command output
+- **⚡ Performance Monitoring**: Execution time tracking and resource limits
+- **📋 Audit Logging**: Complete command execution audit trail with structured logging
+- **🎯 Context Aware**: Supports command execution with proper context cancellation
+- **⚙️ Environment Configuration**: Full configuration via environment variables
 
-## Technical Implementation
+## Security Features
 
-- Built with Go using `os/exec` package for command execution
-- Uses [mcp-go](https://github.com/mark3labs/mcp-go) for MCP protocol implementation
-- Captures stdout, stderr, and exit codes separately
-- Supports both text and base64-encoded output modes
+- **Command Validation**: Allowlist/blocklist with regex pattern matching
+- **Execution Limits**: Configurable timeouts and output size limits
+- **User Isolation**: Run commands as unprivileged users
+- **Working Directory**: Restrict execution to specific directories
+- **Audit Trail**: Complete logging of all command executions
+- **Resource Limits**: Memory and CPU usage constraints
 
 ## Quick Start
 
@@ -28,7 +32,7 @@ This tool creates a bridge between AI systems and your shell environment through
 
 - Go 1.23 or later
 - Unix-like system (Linux, macOS, WSL)
-- Bash shell available in PATH
+- Docker (optional, for containerized deployment)
 
 ### Installation
 
@@ -39,17 +43,86 @@ make install
 make build
 ```
 
-### Usage
-
-Start the MCP server:
+### Basic Usage
 
 ```bash
+# Run with default configuration
 make run
-# or
-./bin/mcp-shell
+
+# Run with custom config file
+MCP_SHELL_CONFIG_FILE=config.json make run
+
+# Run with environment overrides
+MCP_SHELL_SECURITY_ENABLED=true MCP_SHELL_LOG_LEVEL=debug make run
 ```
 
-The server communicates via stdin/stdout using the MCP protocol.
+### Docker Deployment (Recommended)
+
+```bash
+# Build Docker image
+make docker-build
+
+# Run in secure container
+make docker-run-secure
+
+# Run with shell access for debugging
+make docker-shell
+```
+
+## Configuration
+
+### Environment Variables
+
+Basic server and logging configuration via environment variables:
+
+#### Server Configuration
+
+- `MCP_SHELL_SERVER_NAME`: Server name (default: "mcp-shell 🐚")
+- `MCP_SHELL_VERSION`: Server version (set at compile time)
+
+#### Logging Configuration
+
+- `MCP_SHELL_LOG_LEVEL`: Log level (debug, info, warn, error, fatal)
+- `MCP_SHELL_LOG_FORMAT`: Log format (json, console)
+- `MCP_SHELL_LOG_OUTPUT`: Log output (stdout, stderr, file)
+
+#### Configuration File
+
+- `MCP_SHELL_CONFIG_FILE`: Path to JSON configuration file
+
+### Security Configuration (JSON Only)
+
+Security settings are configured exclusively via JSON configuration file:
+
+```bash
+export MCP_SHELL_CONFIG_FILE=/path/to/config.json
+```
+
+Example configuration file:
+
+```json
+{
+  "security": {
+    "enabled": true,
+    "allowed_commands": ["ls", "cat", "grep", "find", "echo"],
+    "blocked_commands": ["rm -rf", "sudo", "chmod 777"],
+    "blocked_patterns": ["rm\\s+.*-rf.*", "sudo\\s+.*"],
+    "max_execution_time": "30s",
+    "working_directory": "/tmp/mcp-workspace",
+    "max_output_size": 1048576,
+    "audit_log": true
+  },
+  "server": {
+    "name": "mcp-shell 🐚",
+    "version": "dev"
+  },
+  "logging": {
+    "level": "info",
+    "format": "console",
+    "output": "stderr"
+  }
+}
+```
 
 ## Tool Parameters
 
@@ -64,75 +137,121 @@ The server communicates via stdin/stdout using the MCP protocol.
   "exit_code": 0,
   "stdout": "command output",
   "stderr": "error output", 
-  "command": "executed command"
+  "command": "executed command",
+  "execution_time": "100ms",
+  "security_info": {
+    "security_enabled": true,
+    "working_dir": "/tmp/mcp-workspace",
+    "timeout_applied": true
+  }
 }
-```
-
-### With base64 encoding:
-
-```json
-{
-  "status": "success",
-  "exit_code": 0,
-  "stdout": "SGVsbG8gV29ybGQK",
-  "stderr": "",
-  "command": "echo 'Hello World'"
-}
-```
-
-## Development
-
-```bash
-# Install dependencies
-make install
-
-# Format code
-make fmt
-
-# Build binary
-make build
-
-# Run tests
-make test
-
-# Clean artifacts
-make clean
-
-# Install dev tools
-make dev-tools
-
-# See all commands
-make help
 ```
 
 ## Integration Examples
 
 ### With Claude Desktop
 
-Add to your MCP configuration:
-
 ```json
 {
   "mcpServers": {
     "shell": {
-      "command": "/path/to/mcp-shell/bin/mcp-shell"
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "mcp-shell:latest"],
+      "env": {
+        "MCP_SHELL_SECURITY_ENABLED": "true",
+        "MCP_SHELL_LOG_LEVEL": "info"
+      }
     }
   }
 }
 ```
 
-### Programmatic Usage
+### Production Deployment
 
-The server expects MCP-formatted JSON messages via stdin and responds via stdout.
+```bash
+# Set environment variables for basic config
+export MCP_SHELL_LOG_LEVEL=info
+export MCP_SHELL_LOG_FORMAT=json
+export MCP_SHELL_CONFIG_FILE=/etc/mcp-shell/config.json
 
-## Security Notice
+# Security is configured in the JSON file only
+# Run service
+./bin/mcp-shell
+```
 
-⚠️ **SECURITY WARNING**: This tool provides unrestricted shell access to AI systems. Only use with trusted AI assistants and in controlled environments. Be aware that executed commands have the same privileges as the user running the server.
+## Development
+
+```bash
+# Install dependencies and dev tools
+make install dev-tools
+
+# Format code
+make fmt
+
+# Run tests
+make test
+
+# Run linter
+make lint
+
+# Build for release
+make release
+
+# Generate config example
+make config-example
+```
+
+## Security Considerations
+
+### ⚠️ Important Security Notes
+
+1. **Default Mode**: Runs with **full system access** when security is disabled
+2. **Container Isolation**: Use Docker deployment for additional security layers
+3. **User Privileges**: Run as non-root user in production
+4. **Network Access**: Commands can access network unless explicitly restricted
+5. **File System**: Can read/write files based on user permissions
+
+### Recommended Production Setup
+
+Create `/etc/mcp-shell/config.json`:
+
+```json
+{
+  "security": {
+    "enabled": true,
+    "allowed_commands": ["ls", "cat", "head", "tail", "grep", "find", "wc", "sort", "uniq"],
+    "blocked_patterns": ["rm\\s+.*-rf.*", "sudo\\s+.*", "chmod\\s+(777|666)", ">/dev/", "curl.*\\|.*sh"],
+    "max_execution_time": "10s",
+    "working_directory": "/tmp/mcp-workspace",
+    "max_output_size": 524288,
+    "audit_log": true
+  }
+}
+```
+
+Set environment:
+```bash
+export MCP_SHELL_CONFIG_FILE=/etc/mcp-shell/config.json
+export MCP_SHELL_LOG_LEVEL=info
+export MCP_SHELL_LOG_FORMAT=json
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open Pull Request
+
+Ensure code is formatted (`make fmt`) and passes tests (`make test`).
 
 ## License
 
 MIT License - See LICENSE file for details.
 
-## Contributing
+## Changelog
 
-Contributions welcome! Please ensure code is properly formatted (`make fmt`) and follows Go best practices.
+- **v0.3.0**: Security features, Docker support, audit logging, structured configuration
+- **v0.2.0**: Structured responses, execution metadata
+- **v0.1.0**: Basic shell execution via MCP
