@@ -6,6 +6,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mark3labs/mcp-go v0.29.0
 	github.com/rs/zerolog v1.34.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

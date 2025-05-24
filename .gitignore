@@ -39,3 +39,5 @@ dist/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+*.ignore.yaml

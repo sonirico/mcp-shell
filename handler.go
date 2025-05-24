@@ -39,7 +39,6 @@ func (h *ShellHandler) handle(
 
 	h.logger.Info().Str("command", command).Msg("Received shell command request")
 
-	// Audit logging
 	if h.validator.isEnabled() {
 		h.logger.Info().
 			Str("command", command).
@@ -47,7 +46,6 @@ func (h *ShellHandler) handle(
 			Msg("Command execution requested")
 	}
 
-	// Security validation
 	if err := h.validator.validateCommand(command); err != nil {
 		h.logger.Warn().
 			Err(err).
@@ -58,7 +56,6 @@ func (h *ShellHandler) handle(
 
 	useBase64 := request.GetBool("base64", false)
 
-	// Execute command
 	result, err := h.executor.execute(ctx, command, useBase64)
 	if err != nil {
 		h.logger.Error().
@@ -68,7 +65,6 @@ func (h *ShellHandler) handle(
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	// Prepare response
 	response := map[string]interface{}{
 		"status":         result.Status,
 		"exit_code":      result.ExitCode,

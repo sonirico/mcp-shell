@@ -9,14 +9,12 @@ import (
 )
 
 func newLogger(cfg LoggingConfig) (zerolog.Logger, error) {
-	// Set log level
 	level, err := zerolog.ParseLevel(cfg.Level)
 	if err != nil {
 		level = zerolog.InfoLevel
 	}
 	zerolog.SetGlobalLevel(level)
 
-	// Set output
 	var output io.Writer
 	switch cfg.Output {
 	case "stdout":
@@ -24,13 +22,11 @@ func newLogger(cfg LoggingConfig) (zerolog.Logger, error) {
 	case "stderr":
 		output = os.Stderr
 	case "file":
-		// For file output, you could implement file rotation here
-		output = os.Stderr // fallback to stderr for now
+		output = os.Stderr
 	default:
 		output = os.Stderr
 	}
 
-	// Set format
 	var logger zerolog.Logger
 	switch cfg.Format {
 	case "json":

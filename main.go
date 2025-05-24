@@ -8,7 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-var version = "dev" // Set at compile time
+var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
@@ -18,41 +18,69 @@ func main() {
 }
 
 func run() error {
-	// Load configuration
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Override version if set at compile time
 	if version != "dev" {
 		cfg.Server.Version = version
 	}
 
-	// Initialize logger
 	log, err := newLogger(cfg.Logging)
 	if err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
-	log.Info().
-		Str("version", cfg.Server.Version).
-		Bool("security_enabled", cfg.Security.Enabled).
-		Msg("Starting mcp-shell server")
+	configFile := os.Getenv("MCP_SHELL_SEC_CONFIG_FILE")
+	if configFile != "" {
+		log.Info().Str("config_file", configFile).Msg("Loading security config")
+	} else {
+		log.Info().Msg("No security config file specified, security disabled")
+	}
 
-	// Initialize components with dependency injection
+	log.Info().
+		Str("server_name", cfg.Server.Name).
+		Str("version", cfg.Server.Version).
+		Str("log_level", cfg.Logging.Level).
+		Str("log_format", cfg.Logging.Format).
+		Bool("security_enabled", cfg.Security.Enabled).
+		Msg("Configuration loaded")
+
+	if cfg.Security.Enabled {
+		log.Info().
+			Str("working_dir", cfg.Security.WorkingDirectory).
+			Dur("max_execution_time", cfg.Security.MaxExecutionTime).
+			Int("max_output_size", cfg.Security.MaxOutputSize).
+			Int("allowed_commands", len(cfg.Security.AllowedCommands)).
+			Int("blocked_commands", len(cfg.Security.BlockedCommands)).
+			Int("blocked_patterns", len(cfg.Security.BlockedPatterns)).
+			Bool("audit_log", cfg.Security.AuditLog).
+			Msg("Security configuration")
+
+		log.Debug().
+			Strs("allowed_commands", cfg.Security.AllowedCommands).
+			Msg("Allowed commands list")
+
+		log.Debug().
+			Strs("blocked_commands", cfg.Security.BlockedCommands).
+			Msg("Blocked commands list")
+
+		log.Debug().
+			Strs("blocked_patterns", cfg.Security.BlockedPatterns).
+			Msg("Blocked patterns list")
+	}
+
 	validator := newSecurityValidator(cfg.Security, log)
 	executor := newCommandExecutor(cfg.Security, log)
 	shellHandler := newShellHandler(validator, executor, log)
 
-	// Create MCP server
 	s := server.NewMCPServer(
 		cfg.Server.Name,
 		cfg.Server.Version,
 		server.WithToolCapabilities(false),
 	)
 
-	// Define shell tool
 	shellTool := mcp.NewTool(
 		"shell_exec",
 		mcp.WithDescription(
@@ -71,12 +99,10 @@ func run() error {
 		),
 	)
 
-	// Register tool handler
 	s.AddTool(shellTool, shellHandler.handle)
 
 	log.Info().Msg("MCP server initialized, serving on stdio")
 
-	// Serve stdio
 	if err := server.ServeStdio(s); err != nil {
 		return fmt.Errorf("server error: %w", err)
 	}

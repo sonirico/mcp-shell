@@ -28,7 +28,6 @@ func (v *SecurityValidator) validateCommand(command string) error {
 
 	v.logger.Debug().Str("command", command).Msg("Validating command")
 
-	// Check blocked patterns first (most restrictive)
 	for _, pattern := range v.config.BlockedPatterns {
 		if matched, err := regexp.MatchString(pattern, command); err == nil && matched {
 			v.logger.Warn().
@@ -39,7 +38,6 @@ func (v *SecurityValidator) validateCommand(command string) error {
 		}
 	}
 
-	// Check blocked commands
 	for _, blocked := range v.config.BlockedCommands {
 		if strings.Contains(command, blocked) {
 			v.logger.Warn().
@@ -50,7 +48,6 @@ func (v *SecurityValidator) validateCommand(command string) error {
 		}
 	}
 
-	// Check allowed commands (if allowlist is specified)
 	if len(v.config.AllowedCommands) > 0 {
 		allowed := false
 		for _, allowedCmd := range v.config.AllowedCommands {

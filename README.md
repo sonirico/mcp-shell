@@ -1,10 +1,19 @@
 # mcp-shell 🐚
 
-A robust Model Context Protocol (MCP) server that provides secure shell command execution capabilities to AI assistants and other MCP clients.
+A robust Model Context Protocol (MCP) server that provides secure shell command execution capabilities to AI assistants and other MCP clients. In other words: the brain thinks, this runs the commands.
+
+> 🧠💥🖥️ *Think of `mcp-shell` as the command-line actuator for your LLM.*
+> While language models reason about the world, `mcp-shell` is what lets them **touch it**.
 
 ## What is this?
 
-This tool creates a bridge between AI systems and your shell environment through the standardized MCP protocol. It allows AI assistants to execute shell commands and receive structured responses, enabling autonomous system interaction and real-world problem solving.
+This tool creates a bridge between AI systems and your shell environment through the standardized MCP protocol. It exposes the system shell as a structured tool, enabling autonomous workflows, tool-assisted reasoning, and real-world problem solving.
+
+Built on top of the official MCP SDK for Go: [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go).
+
+It's written in Go, integrates directly with `mcp-go`, and provides a clean path from thought to execution. I'm aware similar projects exist — this one’s mine. It solves the problem the way I want it solved: minimal, composable, auditable.
+
+Out of the box it runs isolated via Docker, but that's just a start. The roadmap includes support for optional jailing mechanisms like `chroot`, namespaces, and syscall-level confinement — without depending on Docker for everything.
 
 ## Features
 
@@ -40,20 +49,25 @@ This tool creates a bridge between AI systems and your shell environment through
 git clone https://github.com/sonirico/mcp-shell
 cd mcp-shell
 make install
-make build
 ```
 
 ### Basic Usage
 
 ```bash
-# Run with default configuration
+# Run with default configuration (if installed system-wide)
+mcp-shell
+
+# Or run locally
 make run
 
+# Run with security enabled (creates temporary config)
+make run-secure
+
 # Run with custom config file
-MCP_SHELL_CONFIG_FILE=config.json make run
+MCP_SHELL_SEC_CONFIG_FILE=security.json mcp-shell
 
 # Run with environment overrides
-MCP_SHELL_SECURITY_ENABLED=true MCP_SHELL_LOG_LEVEL=debug make run
+MCP_SHELL_LOG_LEVEL=debug mcp-shell
 ```
 
 ### Docker Deployment (Recommended)
@@ -88,40 +102,38 @@ Basic server and logging configuration via environment variables:
 
 #### Configuration File
 
-- `MCP_SHELL_CONFIG_FILE`: Path to JSON configuration file
+- `MCP_SHELL_SEC_CONFIG_FILE`: Path to YAML configuration file
 
-### Security Configuration (JSON Only)
+### Security Configuration (YAML Only)
 
-Security settings are configured exclusively via JSON configuration file:
+Security settings are configured exclusively via YAML configuration file:
 
 ```bash
-export MCP_SHELL_CONFIG_FILE=/path/to/config.json
+export MCP_SHELL_SEC_CONFIG_FILE=security.yaml
 ```
 
-Example configuration file:
+Example security configuration file:
 
-```json
-{
-  "security": {
-    "enabled": true,
-    "allowed_commands": ["ls", "cat", "grep", "find", "echo"],
-    "blocked_commands": ["rm -rf", "sudo", "chmod 777"],
-    "blocked_patterns": ["rm\\s+.*-rf.*", "sudo\\s+.*"],
-    "max_execution_time": "30s",
-    "working_directory": "/tmp/mcp-workspace",
-    "max_output_size": 1048576,
-    "audit_log": true
-  },
-  "server": {
-    "name": "mcp-shell 🐚",
-    "version": "dev"
-  },
-  "logging": {
-    "level": "info",
-    "format": "console",
-    "output": "stderr"
-  }
-}
+```yaml
+security:
+  enabled: true
+  allowed_commands:
+    - ls
+    - cat
+    - grep
+    - find
+    - echo
+  blocked_commands:
+    - rm -rf
+    - sudo
+    - chmod
+  blocked_patterns:
+    - 'rm\s+.*-rf.*'
+    - 'sudo\s+.*'
+  max_execution_time: 30s
+  working_directory: /tmp/mcp-workspace
+  max_output_size: 1048576
+  audit_log: true
 ```
 
 ## Tool Parameters
@@ -169,14 +181,18 @@ Example configuration file:
 ### Production Deployment
 
 ```bash
+# Build and install
+make build
+sudo make install-bin
+
 # Set environment variables for basic config
 export MCP_SHELL_LOG_LEVEL=info
 export MCP_SHELL_LOG_FORMAT=json
-export MCP_SHELL_CONFIG_FILE=/etc/mcp-shell/config.json
+export MCP_SHELL_SEC_CONFIG_FILE=/etc/mcp-shell/config.json
 
 # Security is configured in the JSON file only
 # Run service
-./bin/mcp-shell
+mcp-shell
 ```
 
 ## Development
@@ -205,7 +221,7 @@ make config-example
 
 ### ⚠️ Important Security Notes
 
-1. **Default Mode**: Runs with **full system access** when security is disabled
+1. **Default Mode**: Runs with **full system access** when security is disabled (which is, of course, a terrible idea — unless you're into that).
 2. **Container Isolation**: Use Docker deployment for additional security layers
 3. **User Privileges**: Run as non-root user in production
 4. **Network Access**: Commands can access network unless explicitly restricted
@@ -213,25 +229,36 @@ make config-example
 
 ### Recommended Production Setup
 
-Create `/etc/mcp-shell/config.json`:
+Create `security.yaml`:
 
-```json
-{
-  "security": {
-    "enabled": true,
-    "allowed_commands": ["ls", "cat", "head", "tail", "grep", "find", "wc", "sort", "uniq"],
-    "blocked_patterns": ["rm\\s+.*-rf.*", "sudo\\s+.*", "chmod\\s+(777|666)", ">/dev/", "curl.*\\|.*sh"],
-    "max_execution_time": "10s",
-    "working_directory": "/tmp/mcp-workspace",
-    "max_output_size": 524288,
-    "audit_log": true
-  }
-}
+```yaml
+security:
+  enabled: true
+  allowed_commands:
+    - ls
+    - cat
+    - head
+    - tail
+    - grep
+    - find
+    - wc
+    - sort
+    - uniq
+  blocked_patterns:
+    - 'rm\s+.*-rf.*'
+    - 'sudo\s+.*'
+    - 'chmod\s+(777|666)'
+    - '>/dev/'
+    - 'curl.*\|.*sh'
+  max_execution_time: 10s
+  working_directory: /tmp/mcp-workspace
+  max_output_size: 524288
+  audit_log: true
 ```
 
 Set environment:
 ```bash
-export MCP_SHELL_CONFIG_FILE=/etc/mcp-shell/config.json
+export MCP_SHELL_SEC_CONFIG_FILE=security.yaml
 export MCP_SHELL_LOG_LEVEL=info
 export MCP_SHELL_LOG_FORMAT=json
 ```
@@ -249,9 +276,3 @@ Ensure code is formatted (`make fmt`) and passes tests (`make test`).
 ## License
 
 MIT License - See LICENSE file for details.
-
-## Changelog
-
-- **v0.3.0**: Security features, Docker support, audit logging, structured configuration
-- **v0.2.0**: Structured responses, execution metadata
-- **v0.1.0**: Basic shell execution via MCP

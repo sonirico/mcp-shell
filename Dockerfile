@@ -60,12 +60,12 @@ RUN mkdir -p /etc/mcp-shell && \
 COPY --from=builder /app/mcp-shell /usr/local/bin/mcp-shell
 RUN chmod +x /usr/local/bin/mcp-shell
 
-# Copy example config
-COPY config.example.json /etc/mcp-shell/config.json
-COPY .env.example /etc/mcp-shell/.env.example
+# Copy example security config
+COPY security.yaml /etc/mcp-shell/security.yaml
+
 
 # Set environment
-ENV MCP_SHELL_CONFIG_FILE=/etc/mcp-shell/config.json
+ENV MCP_SHELL_SEC_CONFIG_FILE=/etc/mcp-shell/security.yaml
 ENV PATH="/usr/local/bin:${PATH}"
 
 # Switch to non-root user

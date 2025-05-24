@@ -1,0 +1,32 @@
+security:
+  enabled: true
+  allowed_commands:
+    - ls
+    - cat
+    - grep
+    - find
+    - echo
+    - pwd
+    - whoami
+    - date
+    - curl
+    - wget
+  blocked_commands:
+    - rm -rf
+    - sudo
+    - chmod
+    - dd
+    - mkfs
+    - fdisk
+  blocked_patterns:
+    - 'rm\s+.*-rf.*'
+    - 'sudo\s+.*'
+    - 'chmod\s+(777|666)'
+    - '>/dev/'
+    - 'format\s+'
+    - 'del\s+.*\*'
+  max_execution_time: 30s
+  working_directory: /tmp/mcp-workspace
+  run_as_user: ""
+  max_output_size: 1048576
+  audit_log: true

@@ -57,18 +57,14 @@ func (e *CommandExecutor) execute(
 		Bool("base64", useBase64).
 		Msg("Executing command")
 
-	// Set up timeout
 	timeout := 30 * time.Second
-	if e.config.MaxExecutionTime != "" {
-		if parsed, err := time.ParseDuration(e.config.MaxExecutionTime); err == nil {
-			timeout = parsed
-		}
+	if e.config.MaxExecutionTime > 0 {
+		timeout = e.config.MaxExecutionTime
 	}
 
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Execute command with security constraints
 	result, err := e.executeSecureCommand(cmdCtx, command, useBase64)
 	if err != nil {
 		e.logger.Error().
@@ -108,7 +104,6 @@ func (e *CommandExecutor) executeSecureCommand(
 ) (*ExecutionResult, error) {
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
 
-	// Set working directory if specified
 	if e.config.WorkingDirectory != "" {
 		if err := os.MkdirAll(e.config.WorkingDirectory, 0755); err == nil {
 			cmd.Dir = e.config.WorkingDirectory
@@ -118,7 +113,6 @@ func (e *CommandExecutor) executeSecureCommand(
 		}
 	}
 
-	// Set user if specified (Unix only)
 	if e.config.RunAsUser != "" {
 		if u, err := user.Lookup(e.config.RunAsUser); err == nil {
 			if uid, err := strconv.Atoi(u.Uid); err == nil {
@@ -145,7 +139,6 @@ func (e *CommandExecutor) executeSecureCommand(
 
 	err := cmd.Run()
 
-	// Check output size limits
 	if e.config.MaxOutputSize > 0 {
 		if stdoutBuf.Len() > e.config.MaxOutputSize {
 			e.logger.Warn().
@@ -163,7 +156,6 @@ func (e *CommandExecutor) executeSecureCommand(
 		}
 	}
 
-	// Determine exit code and status
 	exitCode := 0
 	status := "success"
 	if err != nil {
@@ -175,7 +167,6 @@ func (e *CommandExecutor) executeSecureCommand(
 		}
 	}
 
-	// Process output based on encoding preference
 	var stdout, stderr string
 	if useBase64 {
 		stdout = base64.StdEncoding.EncodeToString(stdoutBuf.Bytes())
