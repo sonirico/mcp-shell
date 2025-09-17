@@ -1,0 +1,43 @@
+# Legacy MCP Shell Configuration (VULNERABLE)
+# This configuration uses the old shell execution model and is vulnerable to injection
+# Only use this for backwards compatibility and when you fully trust the input
+security:
+  # Enable security features
+  enabled: true
+  
+  # Enable legacy shell execution (DANGEROUS - vulnerable to injection)
+  use_shell_execution: true
+  
+  # Legacy allowlist approach (vulnerable to bypass)
+  allowed_commands:
+    - "ls"
+    - "pwd"
+    - "echo"
+    - "cat"
+  
+  # Legacy blocklist approach (easily bypassed)
+  blocked_commands:
+    - "rm"
+    - "chmod"
+    - "chown"
+    - "sudo"
+    - "su"
+    
+  blocked_patterns:
+    - "rm\\s+-rf"
+    - "sudo\\s+"
+    - "passwd"
+  
+  # These settings are ignored in legacy mode
+  allowed_executables: []
+  
+  # Execution limits
+  max_execution_time: "30s"
+  max_output_size: 1048576  # 1MB
+  
+  # Security context
+  working_directory: "/tmp"
+  run_as_user: ""
+  
+  # Logging
+  audit_log: true
