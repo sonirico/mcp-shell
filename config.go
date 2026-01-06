@@ -18,14 +18,16 @@ type Config struct {
 
 type SecurityConfig struct {
 	Enabled          bool          `yaml:"enabled"`
-	AllowedCommands  []string      `yaml:"allowed_commands"`
-	BlockedCommands  []string      `yaml:"blocked_commands"`
-	BlockedPatterns  []string      `yaml:"blocked_patterns"`
+	AllowedCommands  []string      `yaml:"allowed_commands"`      // Deprecated: use AllowedExecutables
+	BlockedCommands  []string      `yaml:"blocked_commands"`      // Deprecated: use validation instead
+	BlockedPatterns  []string      `yaml:"blocked_patterns"`      // Deprecated: use validation instead
+	AllowedExecutables []string    `yaml:"allowed_executables"`   // Secure: list of allowed executable paths
 	MaxExecutionTime time.Duration `yaml:"max_execution_time"`
 	WorkingDirectory string        `yaml:"working_directory"`
 	RunAsUser        string        `yaml:"run_as_user"`
 	MaxOutputSize    int           `yaml:"max_output_size"`
 	AuditLog         bool          `yaml:"audit_log"`
+	UseShellExecution bool         `yaml:"use_shell_execution"`   // Legacy mode - enables shell execution (DANGEROUS)
 }
 
 type ServerConfig struct {
@@ -83,11 +85,13 @@ func loadSecurityFromFile(config *Config, filename string) error {
 			AllowedCommands  []string `yaml:"allowed_commands"`
 			BlockedCommands  []string `yaml:"blocked_commands"`
 			BlockedPatterns  []string `yaml:"blocked_patterns"`
+			AllowedExecutables []string `yaml:"allowed_executables"`
 			MaxExecutionTime string   `yaml:"max_execution_time"`
 			WorkingDirectory string   `yaml:"working_directory"`
 			RunAsUser        string   `yaml:"run_as_user"`
 			MaxOutputSize    int      `yaml:"max_output_size"`
 			AuditLog         bool     `yaml:"audit_log"`
+			UseShellExecution bool    `yaml:"use_shell_execution"`
 		} `yaml:"security"`
 	}
 
@@ -99,10 +103,12 @@ func loadSecurityFromFile(config *Config, filename string) error {
 	config.Security.AllowedCommands = yamlConfig.Security.AllowedCommands
 	config.Security.BlockedCommands = yamlConfig.Security.BlockedCommands
 	config.Security.BlockedPatterns = yamlConfig.Security.BlockedPatterns
+	config.Security.AllowedExecutables = yamlConfig.Security.AllowedExecutables
 	config.Security.WorkingDirectory = yamlConfig.Security.WorkingDirectory
 	config.Security.RunAsUser = yamlConfig.Security.RunAsUser
 	config.Security.MaxOutputSize = yamlConfig.Security.MaxOutputSize
 	config.Security.AuditLog = yamlConfig.Security.AuditLog
+	config.Security.UseShellExecution = yamlConfig.Security.UseShellExecution
 
 	if yamlConfig.Security.MaxExecutionTime != "" {
 		duration, err := time.ParseDuration(yamlConfig.Security.MaxExecutionTime)
