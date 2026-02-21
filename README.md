@@ -6,13 +6,17 @@ A robust Model Context Protocol (MCP) server that provides secure shell command 
 > 🧠💥🖥️ *Think of `mcp-shell` as the command-line actuator for your LLM.*
 > While language models reason about the world, `mcp-shell` is what lets them **touch it**.
 
+<a href="https://glama.ai/mcp/servers/@sonirico/mcp-shell">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@sonirico/mcp-shell/badge" alt="mcp-shell MCP server" />
+</a>
+
 ## What is this?
 
 This tool creates a bridge between AI systems and your shell environment through the standardized MCP protocol. It exposes the system shell as a structured tool, enabling autonomous workflows, tool-assisted reasoning, and real-world problem solving.
 
 Built on top of the official MCP SDK for Go: [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go).
 
-It's written in Go, integrates directly with `mcp-go`, and provides a clean path from thought to execution. I'm aware similar projects exist — this one’s mine. It solves the problem the way I want it solved: minimal, composable, auditable.
+It's written in Go, integrates directly with `mcp-go`, and provides a clean path from thought to execution. I'm aware similar projects exist — this one's mine. It solves the problem the way I want it solved: minimal, composable, auditable.
 
 Out of the box it runs isolated via Docker, but that's just a start. The roadmap includes support for optional jailing mechanisms like `chroot`, namespaces, and syscall-level confinement — without depending on Docker for everything.
 
