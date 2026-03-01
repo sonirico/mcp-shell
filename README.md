@@ -1,180 +1,79 @@
-# mcp-shell 🐚
+# mcp-shell
+
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/sonirico/mcp-shell)](https://archestra.ai/mcp-catalog/sonirico__mcp-shell)
+[![glama](https://glama.ai/mcp/servers/@sonirico/mcp-shell/badge)](https://glama.ai/mcp/servers/@sonirico/mcp-shell)
 
-A robust Model Context Protocol (MCP) server that provides secure shell command execution capabilities to AI assistants and other MCP clients. In other words: the brain thinks, this runs the commands.
+MCP server that runs shell commands. Your LLM gets a tool; you get control over what runs and how.
 
-> 🧠💥🖥️ *Think of `mcp-shell` as the command-line actuator for your LLM.*
-> While language models reason about the world, `mcp-shell` is what lets them **touch it**.
+Built on [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go). Written in Go.
 
-<a href="https://glama.ai/mcp/servers/@sonirico/mcp-shell">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/@sonirico/mcp-shell/badge" alt="mcp-shell MCP server" />
-</a>
+---
 
-## What is this?
+## Run it
 
-This tool creates a bridge between AI systems and your shell environment through the standardized MCP protocol. It exposes the system shell as a structured tool, enabling autonomous workflows, tool-assisted reasoning, and real-world problem solving.
-
-Built on top of the official MCP SDK for Go: [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go).
-
-It's written in Go, integrates directly with `mcp-go`, and provides a clean path from thought to execution. I'm aware similar projects exist — this one's mine. It solves the problem the way I want it solved: minimal, composable, auditable.
-
-Out of the box it runs isolated via Docker, but that's just a start. The roadmap includes support for optional jailing mechanisms like `chroot`, namespaces, and syscall-level confinement — without depending on Docker for everything.
-
-## Features
-
-- **🔒 Security First**: Configurable command allowlists, blocklists, and execution constraints
-- **🐳 Docker Ready**: Lightweight Alpine-based container for secure isolation
-- **📊 Structured Responses**: JSON-formatted output with stdout, stderr, exit codes, and execution metadata
-- **🔄 Binary Data Support**: Optional base64 encoding for handling binary command output
-- **⚡ Performance Monitoring**: Execution time tracking and resource limits
-- **📋 Audit Logging**: Complete command execution audit trail with structured logging
-- **🎯 Context Aware**: Supports command execution with proper context cancellation
-- **⚙️ Environment Configuration**: Full configuration via environment variables
-
-## Security Features
-
-- **Command Validation**: Allowlist/blocklist with regex pattern matching
-- **Execution Limits**: Configurable timeouts and output size limits
-- **User Isolation**: Run commands as unprivileged users
-- **Working Directory**: Restrict execution to specific directories
-- **Audit Trail**: Complete logging of all command executions
-- **Resource Limits**: Memory and CPU usage constraints
-
-## Quick Start
-
-### Prerequisites
-
-- Go 1.23 or later
-- Unix-like system (Linux, macOS, WSL)
-- Docker (optional, for containerized deployment)
-
-### Installation
-
-```bash
-git clone https://github.com/sonirico/mcp-shell
-cd mcp-shell
-make install
-```
-
-### Basic Usage
-
-```bash
-# Run with default configuration (if installed system-wide)
-mcp-shell
-
-# Or run locally
-make run
-
-# Run with security enabled (creates temporary config)
-make run-secure
-
-# Run with custom config file
-MCP_SHELL_SEC_CONFIG_FILE=security.json mcp-shell
-
-# Run with environment overrides
-MCP_SHELL_LOG_LEVEL=debug mcp-shell
-```
-
-### Docker Deployment (Recommended)
-
-Pull the image from Docker Hub (no build required):
+**Docker** (easiest):
 
 ```bash
 docker run -it --rm -v /tmp/mcp-workspace:/tmp/mcp-workspace sonirico/mcp-shell:latest
 ```
 
-Or build locally:
+**From source**:
 
 ```bash
-# Build Docker image
-make docker-build
-
-# Run in secure container
-make docker-run-secure
-
-# Run with shell access for debugging
-make docker-shell
+git clone https://github.com/sonirico/mcp-shell && cd mcp-shell
+make install
+mcp-shell
 ```
 
-## Configuration
+---
 
-### Environment Variables
+## Configure it
 
-Basic server and logging configuration via environment variables:
-
-#### Server Configuration
-
-- `MCP_SHELL_SERVER_NAME`: Server name (default: "mcp-shell 🐚")
-- `MCP_SHELL_VERSION`: Server version (set at compile time)
-
-#### Logging Configuration
-
-- `MCP_SHELL_LOG_LEVEL`: Log level (debug, info, warn, error, fatal)
-- `MCP_SHELL_LOG_FORMAT`: Log format (json, console)
-- `MCP_SHELL_LOG_OUTPUT`: Log output (stdout, stderr, file)
-
-#### Configuration File
-
-- `MCP_SHELL_SEC_CONFIG_FILE`: Path to YAML configuration file
-
-### Security Configuration (YAML Only)
-
-Security settings are configured exclusively via YAML configuration file:
+Security is off by default. To enable it, point to a YAML config:
 
 ```bash
-export MCP_SHELL_SEC_CONFIG_FILE=security.yaml
+export MCP_SHELL_SEC_CONFIG_FILE=/path/to/security.yaml
+mcp-shell
 ```
 
-Example security configuration file:
+**Secure mode** (recommended) — no shell interpretation, executable allowlist only:
 
 ```yaml
 security:
   enabled: true
-  allowed_commands:
+  use_shell_execution: false
+  allowed_executables:
     - ls
     - cat
     - grep
     - find
     - echo
-  blocked_commands:
-    - rm -rf
-    - sudo
-    - chmod
-  blocked_patterns:
-    - 'rm\s+.*-rf.*'
-    - 'sudo\s+.*'
+    - /usr/bin/git
+  blocked_patterns:          # optional: restrict args on allowed commands
+    - '(^|\s)remote\s+(-v|--verbose)(\s|$)'
   max_execution_time: 30s
-  working_directory: /tmp/mcp-workspace
   max_output_size: 1048576
+  working_directory: /tmp/mcp-workspace
   audit_log: true
 ```
 
-## Tool Parameters
+**Legacy mode** — shell execution, allowlist/blocklist by command string (vulnerable to injection if not careful):
 
-- `command` (string, required): Shell command to execute
-- `base64` (boolean, optional): Return stdout/stderr as base64-encoded strings
-
-## Response Format
-
-```json
-{
-  "status": "success|error",
-  "exit_code": 0,
-  "stdout": "command output",
-  "stderr": "error output", 
-  "command": "executed command",
-  "execution_time": "100ms",
-  "security_info": {
-    "security_enabled": true,
-    "working_dir": "/tmp/mcp-workspace",
-    "timeout_applied": true
-  }
-}
+```yaml
+security:
+  enabled: true
+  use_shell_execution: true
+  allowed_commands: [ls, cat, grep, echo]
+  blocked_patterns: ['rm\s+-rf', 'sudo\s+']
+  max_execution_time: 30s
+  audit_log: true
 ```
 
-## Integration Examples
+---
 
-### With Claude Desktop
+## Wire it up
+
+**Claude Desktop** — add to your MCP config:
 
 ```json
 {
@@ -182,109 +81,65 @@ security:
     "shell": {
       "command": "docker",
       "args": ["run", "--rm", "-i", "sonirico/mcp-shell:latest"],
-      "env": {
-        "MCP_SHELL_LOG_LEVEL": "info"
-      }
+      "env": { "MCP_SHELL_LOG_LEVEL": "info" }
     }
   }
 }
 ```
 
-### Production Deployment
+For custom config, mount the file and set the env:
 
-```bash
-# Build and install
-make build
-sudo make install-bin
-
-# Set environment variables for basic config
-export MCP_SHELL_LOG_LEVEL=info
-export MCP_SHELL_LOG_FORMAT=json
-export MCP_SHELL_SEC_CONFIG_FILE=/etc/mcp-shell/config.json
-
-# Security is configured in the JSON file only
-# Run service
-mcp-shell
+```json
+{
+  "command": "docker",
+  "args": ["run", "--rm", "-i", "-v", "/path/to/security.yaml:/etc/mcp-shell/security.yaml", "-e", "MCP_SHELL_SEC_CONFIG_FILE=/etc/mcp-shell/security.yaml", "sonirico/mcp-shell:latest"]
+}
 ```
+
+---
+
+## Tool API
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `command` | string | Shell command to run (required) |
+| `base64` | boolean | Encode stdout/stderr as base64 (default: false) |
+
+Response includes `status`, `exit_code`, `stdout`, `stderr`, `command`, `execution_time`, and optional `security_info`.
+
+---
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `MCP_SHELL_SEC_CONFIG_FILE` | Path to security YAML |
+| `MCP_SHELL_SERVER_NAME` | Server name (default: "mcp-shell 🐚") |
+| `MCP_SHELL_LOG_LEVEL` | debug, info, warn, error, fatal |
+| `MCP_SHELL_LOG_FORMAT` | json, console |
+| `MCP_SHELL_LOG_OUTPUT` | stdout, stderr, file |
+
+---
 
 ## Development
 
 ```bash
-# Install dependencies and dev tools
-make install dev-tools
-
-# Format code
-make fmt
-
-# Run tests
-make test
-
-# Run linter
-make lint
-
-# Build for release
-make release
-
-# Generate config example
-make config-example
+make install dev-tools   # deps + goimports, golines
+make fmt test lint
+make docker-build       # build image locally
+make release            # binary + docker image
 ```
 
-## Security Considerations
+---
 
-### ⚠️ Important Security Notes
+## Security
 
-1. **Default Mode**: Runs with **full system access** when security is disabled (which is, of course, a terrible idea — unless you're into that).
-2. **Container Isolation**: Use Docker deployment for additional security layers
-3. **User Privileges**: Run as non-root user in production
-4. **Network Access**: Commands can access network unless explicitly restricted
-5. **File System**: Can read/write files based on user permissions
+- **Default**: No restrictions. Commands run with full access. Fine for local dev; dangerous otherwise.
+- **Secure mode** (`use_shell_execution: false`): Executable allowlist, no shell parsing. Blocks injection.
+- **Docker**: Runs as non-root, Alpine-based. Use it in production.
 
-### Recommended Production Setup
-
-Create `security.yaml`:
-
-```yaml
-security:
-  enabled: true
-  allowed_commands:
-    - ls
-    - cat
-    - head
-    - tail
-    - grep
-    - find
-    - wc
-    - sort
-    - uniq
-  blocked_patterns:
-    - 'rm\s+.*-rf.*'
-    - 'sudo\s+.*'
-    - 'chmod\s+(777|666)'
-    - '>/dev/'
-    - 'curl.*\|.*sh'
-  max_execution_time: 10s
-  working_directory: /tmp/mcp-workspace
-  max_output_size: 524288
-  audit_log: true
-```
-
-Set environment:
-```bash
-export MCP_SHELL_SEC_CONFIG_FILE=security.yaml
-export MCP_SHELL_LOG_LEVEL=info
-export MCP_SHELL_LOG_FORMAT=json
-```
+---
 
 ## Contributing
 
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
-
-Ensure code is formatted (`make fmt`) and passes tests (`make test`).
-
-## License
-
-MIT License - See LICENSE file for details.
+Fork, branch, `make fmt test`, open a PR.
