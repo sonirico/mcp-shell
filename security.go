@@ -84,6 +84,11 @@ func (v *SecurityValidator) validateExecutableCommand(command string) error {
 	// Check if the executable is in the allowlist
 	for _, allowed := range v.config.AllowedExecutables {
 		if v.matchesExecutable(executable, allowed) {
+			// Executable allowed - now apply blocked_patterns and blocked_commands
+			// to restrict specific arguments (e.g. block "git remote -v" while allowing git)
+			if err := v.checkBlockedPatternsAndCommands(command); err != nil {
+				return err
+			}
 			v.logger.Debug().
 				Str("executable", executable).
 				Str("allowed_pattern", allowed).
@@ -150,8 +155,9 @@ func containsDangerousShellConstructs(s string) bool {
 	return false
 }
 
-// validateLegacyCommand performs the old validation for backwards compatibility
-func (v *SecurityValidator) validateLegacyCommand(command string) error {
+// checkBlockedPatternsAndCommands checks if the command matches any blocked pattern or contains blocked keywords.
+// Used by both secure mode (validateExecutableCommand) and legacy mode (validateLegacyCommand).
+func (v *SecurityValidator) checkBlockedPatternsAndCommands(command string) error {
 	for _, pattern := range v.config.BlockedPatterns {
 		if matched, err := regexp.MatchString(pattern, command); err == nil && matched {
 			v.logger.Warn().
@@ -170,6 +176,14 @@ func (v *SecurityValidator) validateLegacyCommand(command string) error {
 				Msg("Command contains blocked keyword")
 			return fmt.Errorf("command contains blocked keyword: %s", blocked)
 		}
+	}
+	return nil
+}
+
+// validateLegacyCommand performs the old validation for backwards compatibility
+func (v *SecurityValidator) validateLegacyCommand(command string) error {
+	if err := v.checkBlockedPatternsAndCommands(command); err != nil {
+		return err
 	}
 
 	if len(v.config.AllowedCommands) > 0 {

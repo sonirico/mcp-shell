@@ -101,6 +101,42 @@ func TestSecurityValidator_validateCommand(t *testing.T) {
 			expectError:   true,
 			errorContains: "blocked pattern",
 		},
+		// Issue #7: blocked_patterns in secure mode
+		{
+			name: "secure mode with blocked_patterns - blocks git remote -v",
+			config: SecurityConfig{
+				Enabled:            true,
+				UseShellExecution:  false,
+				AllowedExecutables: []string{"git"},
+				BlockedPatterns:    []string{`(^|\s)remote\s+(-v|--verbose)(\s|$)`},
+			},
+			command:       "git remote -v",
+			expectError:   true,
+			errorContains: "blocked pattern",
+		},
+		{
+			name: "secure mode with blocked_patterns - allows git status",
+			config: SecurityConfig{
+				Enabled:            true,
+				UseShellExecution:  false,
+				AllowedExecutables: []string{"git"},
+				BlockedPatterns:    []string{`(^|\s)remote\s+(-v|--verbose)(\s|$)`},
+			},
+			command:     "git status",
+			expectError: false,
+		},
+		{
+			name: "secure mode with blocked_commands - blocks rm in allowed ls",
+			config: SecurityConfig{
+				Enabled:            true,
+				UseShellExecution:  false,
+				AllowedExecutables: []string{"ls", "rm"},
+				BlockedCommands:    []string{"rm -rf"},
+			},
+			command:       "rm -rf /tmp",
+			expectError:   true,
+			errorContains: "blocked keyword",
+		},
 	}
 
 	for _, tt := range tests {
