@@ -77,6 +77,14 @@ MCP_SHELL_LOG_LEVEL=debug mcp-shell
 
 ### Docker Deployment (Recommended)
 
+Pull the image from Docker Hub (no build required):
+
+```bash
+docker run -it --rm -v /tmp/mcp-workspace:/tmp/mcp-workspace sonirico/mcp-shell:latest
+```
+
+Or build locally:
+
 ```bash
 # Build Docker image
 make docker-build
@@ -173,9 +181,8 @@ security:
   "mcpServers": {
     "shell": {
       "command": "docker",
-      "args": ["run", "--rm", "-i", "mcp-shell:latest"],
+      "args": ["run", "--rm", "-i", "sonirico/mcp-shell:latest"],
       "env": {
-        "MCP_SHELL_SECURITY_ENABLED": "true",
         "MCP_SHELL_LOG_LEVEL": "info"
       }
     }
