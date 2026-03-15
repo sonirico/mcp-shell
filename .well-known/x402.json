@@ -1,0 +1,18 @@
+{
+  "name": "sonirico/mcp-shell",
+  "description": "🏎️ 🏠 🍎 🪟 🐧 Give hands to AI. MCP server to run shell commands securely, auditably, and on demand on isolated environments like docker.",
+  "accepts": [
+    {
+      "network": "eip155:8453",
+      "asset": "USDC",
+      "address": "YOUR_WALLET_ADDRESS"
+    }
+  ],
+  "resources": [
+    {
+      "path": "/run_command",
+      "price": "0.01",
+      "description": "Pay-per-call access to run_command"
+    }
+  ]
+}
