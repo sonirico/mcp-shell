@@ -143,3 +143,8 @@ make release            # binary + docker image
 ## Contributing
 
 Fork, branch, `make fmt test`, open a PR.
+
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/sonirico-mcp-shell).
+
