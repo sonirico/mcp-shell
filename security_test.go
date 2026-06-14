@@ -137,6 +137,31 @@ func TestSecurityValidator_validateCommand(t *testing.T) {
 			expectError:   true,
 			errorContains: "blocked keyword",
 		},
+		// GHSA-74hp-mggr-hv58: git shell-alias bypass via `-c alias.x=!cmd`.
+		{
+			name: "secure mode blocks git shell-alias injection",
+			config: SecurityConfig{
+				Enabled:            true,
+				UseShellExecution:  false,
+				AllowedExecutables: []string{"git"},
+			},
+			command:       "git -c alias.pwn=!touch pwn /tmp/target",
+			expectError:   true,
+			errorContains: "shell metacharacters",
+		},
+		// GHSA-3x77-wg38-92r3: an interpreter still has to be in the allowlist
+		// to be reachable; bash absent from the list is rejected outright.
+		{
+			name: "secure mode blocks bash -c when bash not allowlisted",
+			config: SecurityConfig{
+				Enabled:            true,
+				UseShellExecution:  false,
+				AllowedExecutables: []string{"ls", "echo"},
+			},
+			command:       "/bin/bash -c id",
+			expectError:   true,
+			errorContains: "not in allowed list",
+		},
 	}
 
 	for _, tt := range tests {
@@ -160,11 +185,11 @@ func TestSecurityValidator_validateExecutableCommand(t *testing.T) {
 	logger := zerolog.New(zerolog.NewTestWriter(t))
 
 	tests := []struct {
-		name              string
+		name               string
 		allowedExecutables []string
-		command           string
-		expectError       bool
-		errorContains     string
+		command            string
+		expectError        bool
+		errorContains      string
 	}{
 		{
 			name:               "simple command in allowlist",
@@ -282,11 +307,11 @@ func TestSecurityValidator_validateLegacyCommand(t *testing.T) {
 	logger := zerolog.New(zerolog.NewTestWriter(t))
 
 	tests := []struct {
-		name            string
-		config          SecurityConfig
-		command         string
-		expectError     bool
-		errorContains   string
+		name          string
+		config        SecurityConfig
+		command       string
+		expectError   bool
+		errorContains string
 	}{
 		{
 			name: "no restrictions - allows everything",

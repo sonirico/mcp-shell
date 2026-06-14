@@ -33,10 +33,13 @@ func run() error {
 	}
 
 	configFile := os.Getenv("MCP_SHELL_SEC_CONFIG_FILE")
-	if configFile != "" {
-		log.Info().Str("config_file", configFile).Msg("Loading security config")
-	} else {
-		log.Info().Msg("No security config file specified, security disabled")
+	switch {
+	case configFile != "":
+		log.Info().Str("config_file", configFile).Msg("Loading security config from file")
+	case cfg.Security.Enabled:
+		log.Info().Msg("No security config file specified, using built-in secure defaults")
+	default:
+		log.Warn().Msg("SECURITY DISABLED via MCP_SHELL_ALLOW_UNSAFE - all commands run unrestricted")
 	}
 
 	log.Info().

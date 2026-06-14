@@ -17,17 +17,17 @@ type Config struct {
 }
 
 type SecurityConfig struct {
-	Enabled          bool          `yaml:"enabled"`
-	AllowedCommands  []string      `yaml:"allowed_commands"`      // Deprecated: use AllowedExecutables
-	BlockedCommands  []string      `yaml:"blocked_commands"`      // Deprecated: use validation instead
-	BlockedPatterns  []string      `yaml:"blocked_patterns"`      // Deprecated: use validation instead
-	AllowedExecutables []string    `yaml:"allowed_executables"`   // Secure: list of allowed executable paths
-	MaxExecutionTime time.Duration `yaml:"max_execution_time"`
-	WorkingDirectory string        `yaml:"working_directory"`
-	RunAsUser        string        `yaml:"run_as_user"`
-	MaxOutputSize    int           `yaml:"max_output_size"`
-	AuditLog         bool          `yaml:"audit_log"`
-	UseShellExecution bool         `yaml:"use_shell_execution"`   // Legacy mode - enables shell execution (DANGEROUS)
+	Enabled            bool          `yaml:"enabled"`
+	AllowedCommands    []string      `yaml:"allowed_commands"`    // Deprecated: use AllowedExecutables
+	BlockedCommands    []string      `yaml:"blocked_commands"`    // Deprecated: use validation instead
+	BlockedPatterns    []string      `yaml:"blocked_patterns"`    // Deprecated: use validation instead
+	AllowedExecutables []string      `yaml:"allowed_executables"` // Secure: list of allowed executable paths
+	MaxExecutionTime   time.Duration `yaml:"max_execution_time"`
+	WorkingDirectory   string        `yaml:"working_directory"`
+	RunAsUser          string        `yaml:"run_as_user"`
+	MaxOutputSize      int           `yaml:"max_output_size"`
+	AuditLog           bool          `yaml:"audit_log"`
+	UseShellExecution  bool          `yaml:"use_shell_execution"` // Legacy mode - enables shell execution (DANGEROUS)
 }
 
 type ServerConfig struct {
@@ -41,13 +41,38 @@ type LoggingConfig struct {
 	Output string
 }
 
+// newDefaultSecurityConfig returns the built-in secure defaults applied when no
+// MCP_SHELL_SEC_CONFIG_FILE is provided. Secure mode is the operating default:
+// the server boots restricted to a narrow allowlist of utilities that cannot
+// themselves spawn arbitrary processes. Shell/language interpreters (bash, sh,
+// python, perl, ruby, git) are intentionally excluded - allowing one is
+// equivalent to disabling the allowlist entirely.
+func newDefaultSecurityConfig() SecurityConfig {
+	return SecurityConfig{
+		Enabled:           true,
+		UseShellExecution: false,
+		AllowedExecutables: []string{
+			"ls", "pwd", "whoami", "date", "echo",
+			"cat", "grep", "find", "wc", "head", "tail", "sort", "uniq",
+		},
+		MaxExecutionTime: 30 * time.Second,
+		MaxOutputSize:    1048576,
+		WorkingDirectory: "/tmp",
+		AuditLog:         true,
+	}
+}
+
 func loadConfig() (*Config, error) {
 	_ = godotenv.Load()
 
+	security := newDefaultSecurityConfig()
+	// Unrestricted mode requires affirmative opt-in, never silence.
+	if getBoolEnv("MCP_SHELL_ALLOW_UNSAFE", false) {
+		security.Enabled = false
+	}
+
 	config := &Config{
-		Security: SecurityConfig{
-			Enabled: false,
-		},
+		Security: security,
 		Server: ServerConfig{
 			Name:    getEnv("MCP_SHELL_SERVER_NAME", "mcp-shell 🐚"),
 			Version: version,
@@ -81,17 +106,17 @@ func loadSecurityFromFile(config *Config, filename string) error {
 
 	var yamlConfig struct {
 		Security struct {
-			Enabled          bool     `yaml:"enabled"`
-			AllowedCommands  []string `yaml:"allowed_commands"`
-			BlockedCommands  []string `yaml:"blocked_commands"`
-			BlockedPatterns  []string `yaml:"blocked_patterns"`
+			Enabled            bool     `yaml:"enabled"`
+			AllowedCommands    []string `yaml:"allowed_commands"`
+			BlockedCommands    []string `yaml:"blocked_commands"`
+			BlockedPatterns    []string `yaml:"blocked_patterns"`
 			AllowedExecutables []string `yaml:"allowed_executables"`
-			MaxExecutionTime string   `yaml:"max_execution_time"`
-			WorkingDirectory string   `yaml:"working_directory"`
-			RunAsUser        string   `yaml:"run_as_user"`
-			MaxOutputSize    int      `yaml:"max_output_size"`
-			AuditLog         bool     `yaml:"audit_log"`
-			UseShellExecution bool    `yaml:"use_shell_execution"`
+			MaxExecutionTime   string   `yaml:"max_execution_time"`
+			WorkingDirectory   string   `yaml:"working_directory"`
+			RunAsUser          string   `yaml:"run_as_user"`
+			MaxOutputSize      int      `yaml:"max_output_size"`
+			AuditLog           bool     `yaml:"audit_log"`
+			UseShellExecution  bool     `yaml:"use_shell_execution"`
 		} `yaml:"security"`
 	}
 

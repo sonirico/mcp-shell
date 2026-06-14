@@ -41,3 +41,5 @@ ehthumbs.db
 Thumbs.db
 
 *.ignore.yaml
+# Compiled binary (module name)
+/mcp-shell

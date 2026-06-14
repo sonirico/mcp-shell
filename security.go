@@ -16,10 +16,40 @@ type SecurityValidator struct {
 }
 
 func newSecurityValidator(cfg SecurityConfig, logger zerolog.Logger) *SecurityValidator {
-	return &SecurityValidator{
+	v := &SecurityValidator{
 		config: cfg,
 		logger: logger.With().Str("component", "security").Logger(),
 	}
+	v.warnOnInterpreters()
+	return v
+}
+
+// warnOnInterpreters flags allowlisted executables that can execute arbitrary
+// commands regardless of metacharacter checks (shell/language interpreters, and
+// git via `-c alias.x=!cmd`). Allowing one defeats secure mode; the warning
+// surfaces the misconfiguration at startup instead of silently trusting it.
+func (v *SecurityValidator) warnOnInterpreters() {
+	if !v.config.Enabled || v.config.UseShellExecution {
+		return
+	}
+	for _, exe := range v.config.AllowedExecutables {
+		if isInterpreterExecutable(filepath.Base(exe)) {
+			v.logger.Warn().
+				Str("executable", exe).
+				Msg("allowed executable can run arbitrary commands (interpreter or alias-capable) - this defeats secure mode regardless of metacharacter filtering")
+		}
+	}
+}
+
+// isInterpreterExecutable reports whether base names an executable that can
+// itself run arbitrary commands, making executable-allowlisting ineffective.
+func isInterpreterExecutable(base string) bool {
+	switch base {
+	case "bash", "sh", "zsh", "fish", "dash", "ksh", "csh", "tcsh",
+		"python", "python2", "python3", "perl", "ruby", "node", "php", "git":
+		return true
+	}
+	return false
 }
 
 func (v *SecurityValidator) validateCommand(command string) error {
@@ -133,7 +163,9 @@ func (v *SecurityValidator) matchesExecutable(executable, pattern string) bool {
 // containsShellMetacharacters checks if a string contains shell metacharacters
 // that could be used for command injection
 func containsShellMetacharacters(s string) bool {
-	metachars := "|&;<>(){}[]$`\\"
+	// '!' is included because git interprets `-c alias.x=!cmd` as a shell alias,
+	// turning an allowlisted git into arbitrary command execution.
+	metachars := "|&;<>(){}[]$`\\!"
 	for _, char := range s {
 		if strings.ContainsRune(metachars, char) {
 			return true
@@ -145,7 +177,7 @@ func containsShellMetacharacters(s string) bool {
 // containsDangerousShellConstructs checks for potentially dangerous shell constructs
 func containsDangerousShellConstructs(s string) bool {
 	dangerous := []string{
-		"$(", "`", "${", "&&", "||", ";", "|", ">", "<", ">>", "<<", "&",
+		"$(", "`", "${", "&&", "||", ";", "|", ">", "<", ">>", "<<", "&", "=!",
 	}
 	for _, construct := range dangerous {
 		if strings.Contains(s, construct) {

@@ -29,7 +29,16 @@ mcp-shell
 
 ## Configure it
 
-Security is off by default. To enable it, point to a YAML config:
+**Secure mode is the default.** With no config file, `mcp-shell` boots in secure
+mode restricted to a narrow allowlist of read-only utilities (`ls`, `cat`,
+`grep`, `find`, `head`, `tail`, ...). You only need a config file to widen or
+change that policy. To run fully unrestricted you must opt in explicitly:
+
+```bash
+MCP_SHELL_ALLOW_UNSAFE=true mcp-shell   # disables all validation - do not use in production
+```
+
+To customize the policy, point to a YAML config:
 
 ```bash
 export MCP_SHELL_SEC_CONFIG_FILE=/path/to/security.yaml
@@ -48,7 +57,10 @@ security:
     - grep
     - find
     - echo
-    - /usr/bin/git
+  # WARNING: never add shell/language interpreters (bash, sh, python, perl,
+  # ruby, node) or alias-capable tools (git) here - the interpreter executes
+  # whatever it is handed, bypassing secure mode entirely. mcp-shell warns at
+  # startup if it finds one.
   blocked_patterns:          # optional: restrict args on allowed commands
     - '(^|\s)remote\s+(-v|--verbose)(\s|$)'
   max_execution_time: 30s
@@ -113,7 +125,8 @@ Response includes `status`, `exit_code`, `stdout`, `stderr`, `command`, `executi
 
 | Variable | Description |
 |----------|-------------|
-| `MCP_SHELL_SEC_CONFIG_FILE` | Path to security YAML |
+| `MCP_SHELL_SEC_CONFIG_FILE` | Path to security YAML (overrides built-in secure defaults) |
+| `MCP_SHELL_ALLOW_UNSAFE` | Set `true` to disable all validation and run unrestricted (opt-in) |
 | `MCP_SHELL_SERVER_NAME` | Server name (default: "mcp-shell 🐚") |
 | `MCP_SHELL_LOG_LEVEL` | debug, info, warn, error, fatal |
 | `MCP_SHELL_LOG_FORMAT` | json, console |
@@ -134,9 +147,10 @@ make release            # binary + docker image
 
 ## Security
 
-- **Default**: No restrictions. Commands run with full access. Fine for local dev; dangerous otherwise.
-- **Secure mode** (`use_shell_execution: false`): Executable allowlist, no shell parsing. Blocks injection.
-- **Docker**: Runs as non-root, Alpine-based. Use it in production.
+- **Default**: Secure mode, restricted to a narrow allowlist of read-only utilities. No interpreters.
+- **Secure mode** (`use_shell_execution: false`): Executable allowlist, no shell parsing. Blocks injection. Never allowlist interpreters (bash/sh/python/git) — doing so defeats the allowlist.
+- **Unrestricted**: Only via `MCP_SHELL_ALLOW_UNSAFE=true`. Full access; fine for local dev, dangerous otherwise.
+- **Docker**: Runs as non-root, Alpine-based. Use it in production. Best paired with an OS sandbox (read-only FS, dropped caps) as defense-in-depth.
 
 ---
 
