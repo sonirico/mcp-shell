@@ -10,176 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCommandExecutor_parseCommand(t *testing.T) {
-	tests := []struct {
-		name           string
-		command        string
-		expectExec     string
-		expectArgs     []string
-		expectError    bool
-		errorContains  string
-	}{
-		{
-			name:        "simple command",
-			command:     "ls -la",
-			expectExec:  "ls",
-			expectArgs:  []string{"-la"},
-			expectError: false,
-		},
-		{
-			name:        "command with multiple args",
-			command:     "grep -n test file.txt",
-			expectExec:  "grep",
-			expectArgs:  []string{"-n", "test", "file.txt"},
-			expectError: false,
-		},
-		{
-			name:        "command with spaces around",
-			command:     "  echo hello world  ",
-			expectExec:  "echo",
-			expectArgs:  []string{"hello", "world"},
-			expectError: false,
-		},
-		{
-			name:        "single command no args",
-			command:     "pwd",
-			expectExec:  "pwd",
-			expectArgs:  []string{},
-			expectError: false,
-		},
-		{
-			name:          "empty command",
-			command:       "",
-			expectError:   true,
-			errorContains: "empty command",
-		},
-		{
-			name:          "whitespace only",
-			command:       "   ",
-			expectError:   true,
-			errorContains: "empty command",
-		},
-		{
-			name:          "command with pipe (shell metacharacter)",
-			command:       "ls | grep test",
-			expectError:   true,
-			errorContains: "dangerous shell constructs",
-		},
-		{
-			name:          "command with semicolon",
-			command:       "echo hello; rm file",
-			expectError:   true,
-			errorContains: "dangerous shell constructs",
-		},
-		{
-			name:          "command with command substitution",
-			command:       "echo $(whoami)",
-			expectError:   true,
-			errorContains: "dangerous shell constructs",
-		},
-		{
-			name:          "command with backticks",
-			command:       "echo `whoami`",
-			expectError:   true,
-			errorContains: "dangerous shell constructs",
-		},
-		{
-			name:          "command with redirection",
-			command:       "echo hello > file.txt",
-			expectError:   true,
-			errorContains: "dangerous shell constructs",
-		},
-		{
-			name:          "command with background process",
-			command:       "sleep 10 &",
-			expectError:   true,
-			errorContains: "dangerous shell constructs",
-		},
-	}
-
-	logger := zerolog.New(zerolog.NewTestWriter(t))
-	config := SecurityConfig{}
-	executor := newCommandExecutor(config, logger)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			exec, args, err := executor.parseCommand(tt.command)
-
-			if tt.expectError {
-				require.Error(t, err)
-				if tt.errorContains != "" {
-					assert.Contains(t, err.Error(), tt.errorContains)
-				}
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tt.expectExec, exec)
-				assert.Equal(t, tt.expectArgs, args)
-			}
-		})
-	}
-}
-
-func TestCommandExecutor_containsShellMetacharacters(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected bool
-	}{
-		{"normal command", "ls", false},
-		{"path with slash", "/usr/bin/ls", false},
-		{"command with dash", "ls-extended", false},
-		{"command with underscore", "my_command", false},
-		{"command with dot", "node.js", false},
-		{"pipe character", "ls|grep", true},
-		{"ampersand", "command&", true},
-		{"semicolon", "cmd;", true},
-		{"less than", "cmd<", true},
-		{"greater than", "cmd>", true},
-		{"parentheses", "cmd()", true},
-		{"braces", "cmd{}", true},
-		{"brackets", "cmd[]", true},
-		{"dollar sign", "cmd$", true},
-		{"backtick", "cmd`", true},
-		{"backslash", "cmd\\", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := containsShellMetacharacters(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestCommandExecutor_containsDangerousShellConstructs(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected bool
-	}{
-		{"normal argument", "file.txt", false},
-		{"normal flag", "-la", false},
-		{"command substitution", "$(whoami)", true},
-		{"backtick substitution", "`whoami`", true},
-		{"variable expansion", "${HOME}", true},
-		{"logical AND", "cmd && cmd2", true},
-		{"logical OR", "cmd || cmd2", true},
-		{"command separator", "cmd; cmd2", true},
-		{"pipe", "cmd | cmd2", true},
-		{"redirection out", "cmd > file", true},
-		{"redirection in", "cmd < file", true},
-		{"append redirection", "cmd >> file", true},
-		{"here document", "cmd << EOF", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := containsDangerousShellConstructs(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestCommandExecutor_executeSecureCommand_secure_vs_legacy(t *testing.T) {
 	logger := zerolog.New(zerolog.NewTestWriter(t))
 	ctx := context.Background()
@@ -208,11 +38,11 @@ func TestCommandExecutor_executeSecureCommand_secure_vs_legacy(t *testing.T) {
 			command:           "echo hello | cat",
 			useShellExecution: false,
 			expectError:       true,
-			errorContains:     "dangerous shell constructs",
+			errorContains:     "command parsing failed",
 		},
 		{
 			name:              "command with pipe - legacy mode allows",
-			command:           "echo hello | cat", 
+			command:           "echo hello | cat",
 			useShellExecution: true,
 			expectError:       false,
 		},
@@ -221,7 +51,7 @@ func TestCommandExecutor_executeSecureCommand_secure_vs_legacy(t *testing.T) {
 			command:           "echo $(whoami)",
 			useShellExecution: false,
 			expectError:       true,
-			errorContains:     "dangerous shell constructs",
+			errorContains:     "command parsing failed",
 		},
 		{
 			name:              "command substitution - legacy mode allows",
@@ -260,9 +90,9 @@ func TestCommandExecutor_vulnerability_prevention(t *testing.T) {
 
 	// These are actual injection payloads that should be blocked
 	vulnerabilityTests := []struct {
-		name          string
-		command       string
-		description   string
+		name        string
+		command     string
+		description string
 	}{
 		{
 			name:        "VULN.md example - obfuscated chmod",
@@ -327,7 +157,7 @@ func TestCommandExecutor_vulnerability_prevention(t *testing.T) {
 				_, err := executor.executeSecureCommand(ctx, vt.command, false)
 				// These may fail due to actual command execution, but should not fail due to parsing
 				if err != nil {
-					assert.NotContains(t, err.Error(), "shell metacharacters", 
+					assert.NotContains(t, err.Error(), "shell metacharacters",
 						"Legacy mode should not block based on metacharacters")
 					assert.NotContains(t, err.Error(), "command parsing failed",
 						"Legacy mode should not fail at parsing stage")

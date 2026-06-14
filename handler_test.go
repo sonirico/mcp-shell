@@ -16,11 +16,11 @@ func TestShellHandler_handle_secure_mode(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name              string
-		config            SecurityConfig
-		requestArgs       map[string]interface{}
-		expectError       bool
-		expectErrorText   string
+		name            string
+		config          SecurityConfig
+		requestArgs     map[string]interface{}
+		expectError     bool
+		expectErrorText string
 	}{
 		{
 			name: "secure mode allows safe command",
@@ -126,7 +126,7 @@ func TestShellHandler_vulnerability_prevention_integration(t *testing.T) {
 
 		result, err := handler.handle(ctx, vulnerabilityRequest)
 		require.NoError(t, err)
-		
+
 		// Should be blocked at validation stage
 		assert.True(t, result.IsError, "Secure mode should block the injection attempt")
 	})
@@ -145,7 +145,7 @@ func TestShellHandler_vulnerability_prevention_integration(t *testing.T) {
 
 		result, err := handler.handle(ctx, vulnerabilityRequest)
 		require.NoError(t, err)
-		
+
 		// This demonstrates the vulnerability - legacy mode allows dangerous commands
 		// In a real attack, this would execute the obfuscated chmod
 		t.Logf("Legacy mode result - IsError: %v", result.IsError)
@@ -164,7 +164,7 @@ func TestShellHandler_vulnerability_prevention_integration(t *testing.T) {
 
 		result, err := handler.handle(ctx, vulnerabilityRequest)
 		require.NoError(t, err)
-		
+
 		// This demonstrates the vulnerability - legacy mode cannot detect obfuscated commands
 		// even with keyword blocking, since "chmod" doesn't appear literally
 		assert.False(t, result.IsError, "Legacy mode with blocks still vulnerable to obfuscation")
@@ -236,9 +236,9 @@ func TestShellHandler_direct_security_tests(t *testing.T) {
 		err := validator.validateCommand("echo $(rm -rf /)")
 		assert.Error(t, err, "Should block command with shell metacharacters")
 
-		// Test parsing - would also fail in executor
-		_, _, err = executor.parseCommand("echo $(rm -rf /)")
-		assert.Error(t, err, "Should fail to parse command with shell metacharacters")
+		// Test parsing - the executor's unfurler rejects it as well
+		res := executor.unfurler.unfurl("echo $(rm -rf /)")
+		assert.False(t, res.Allowed, "Executor should reject command with command substitution")
 	})
 
 	t.Run("legacy_execution_allows_injection", func(t *testing.T) {
