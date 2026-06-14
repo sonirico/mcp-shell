@@ -10,6 +10,14 @@ security:
   
   # Allowed executables - only these commands can be executed
   # Use absolute paths for maximum security, or command names for PATH lookup
+  #
+  # WARNING: Never add shell or language interpreters (bash, sh, python, perl,
+  # ruby, node, php) or alias-capable tools (git) to this list. The interpreter
+  # executes whatever it is handed, so allowing one bypasses secure mode
+  # entirely - the metacharacter checks never see the inner command. mcp-shell
+  # logs a warning at startup if it detects one here.
+  # Note: 'find' is allowed but can itself spawn processes via -exec; restrict it
+  # with blocked_patterns if that matters for your threat model.
   allowed_executables:
     - "ls"
     - "pwd"
@@ -24,9 +32,6 @@ security:
     - "tail"
     - "sort"
     - "uniq"
-    - "/usr/bin/git"
-    - "/usr/bin/python3"
-    - "/bin/bash"  # Only allow if you trust the arguments
   
   # Legacy settings (deprecated but kept for backwards compatibility)
   # These are ignored when use_shell_execution is false

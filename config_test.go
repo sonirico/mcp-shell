@@ -15,16 +15,36 @@ func TestLoadConfig_defaults(t *testing.T) {
 	os.Unsetenv("MCP_SHELL_SEC_CONFIG_FILE")
 	os.Unsetenv("MCP_SHELL_SERVER_NAME")
 	os.Unsetenv("MCP_SHELL_LOG_LEVEL")
+	os.Unsetenv("MCP_SHELL_ALLOW_UNSAFE")
 
 	config, err := loadConfig()
 	require.NoError(t, err)
 
-	// Check defaults
-	assert.False(t, config.Security.Enabled)
+	// Secure mode is the built-in default, no config file required.
+	assert.True(t, config.Security.Enabled)
+	assert.False(t, config.Security.UseShellExecution)
+	assert.NotEmpty(t, config.Security.AllowedExecutables)
+	// No shell/language interpreter ships in the default allowlist.
+	for _, exe := range config.Security.AllowedExecutables {
+		assert.False(t, isInterpreterExecutable(exe),
+			"default allowlist must not contain interpreter %q", exe)
+	}
 	assert.Equal(t, "mcp-shell 🐚", config.Server.Name)
 	assert.Equal(t, "info", config.Logging.Level)
 	assert.Equal(t, "console", config.Logging.Format)
 	assert.Equal(t, "stderr", config.Logging.Output)
+}
+
+func TestLoadConfig_allowUnsafeOptOut(t *testing.T) {
+	os.Unsetenv("MCP_SHELL_SEC_CONFIG_FILE")
+	os.Setenv("MCP_SHELL_ALLOW_UNSAFE", "true")
+	t.Cleanup(func() { os.Unsetenv("MCP_SHELL_ALLOW_UNSAFE") })
+
+	config, err := loadConfig()
+	require.NoError(t, err)
+
+	// Unrestricted mode only via affirmative opt-in.
+	assert.False(t, config.Security.Enabled)
 }
 
 func TestLoadConfig_environment_variables(t *testing.T) {
@@ -33,7 +53,7 @@ func TestLoadConfig_environment_variables(t *testing.T) {
 	os.Setenv("MCP_SHELL_LOG_LEVEL", "debug")
 	os.Setenv("MCP_SHELL_LOG_FORMAT", "json")
 	os.Setenv("MCP_SHELL_LOG_OUTPUT", "stdout")
-	
+
 	defer func() {
 		os.Unsetenv("MCP_SHELL_SERVER_NAME")
 		os.Unsetenv("MCP_SHELL_LOG_LEVEL")
@@ -138,7 +158,7 @@ security:
 			// Create temporary file
 			tmpDir := t.TempDir()
 			configFile := filepath.Join(tmpDir, "security.yaml")
-			
+
 			err := os.WriteFile(configFile, []byte(tt.yamlContent), 0644)
 			require.NoError(t, err)
 
@@ -226,7 +246,7 @@ func TestGetEnv_functions(t *testing.T) {
 		// Test with existing environment variable
 		os.Setenv("TEST_VAR", "test_value")
 		defer os.Unsetenv("TEST_VAR")
-		
+
 		value := getEnv("TEST_VAR", "default")
 		assert.Equal(t, "test_value", value)
 
@@ -239,7 +259,7 @@ func TestGetEnv_functions(t *testing.T) {
 		// Test with true value
 		os.Setenv("TEST_BOOL", "true")
 		defer os.Unsetenv("TEST_BOOL")
-		
+
 		value := getBoolEnv("TEST_BOOL", false)
 		assert.True(t, value)
 
@@ -262,7 +282,7 @@ func TestGetEnv_functions(t *testing.T) {
 		// Test with valid integer
 		os.Setenv("TEST_INT", "42")
 		defer os.Unsetenv("TEST_INT")
-		
+
 		value := getIntEnv("TEST_INT", 0)
 		assert.Equal(t, 42, value)
 
@@ -295,7 +315,7 @@ security:
 `
 		tmpDir := t.TempDir()
 		configFile := filepath.Join(tmpDir, "secure.yaml")
-		
+
 		err := os.WriteFile(configFile, []byte(yamlContent), 0644)
 		require.NoError(t, err)
 
@@ -335,7 +355,7 @@ security:
 `
 		tmpDir := t.TempDir()
 		configFile := filepath.Join(tmpDir, "legacy.yaml")
-		
+
 		err := os.WriteFile(configFile, []byte(yamlContent), 0644)
 		require.NoError(t, err)
 
