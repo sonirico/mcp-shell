@@ -11,14 +11,18 @@ import (
 )
 
 type SecurityValidator struct {
-	config SecurityConfig
-	logger zerolog.Logger
+	config   SecurityConfig
+	logger   zerolog.Logger
+	unfurler *commandUnfurler
+	policies *policySet
 }
 
 func newSecurityValidator(cfg SecurityConfig, logger zerolog.Logger) *SecurityValidator {
 	v := &SecurityValidator{
-		config: cfg,
-		logger: logger.With().Str("component", "security").Logger(),
+		config:   cfg,
+		logger:   logger.With().Str("component", "security").Logger(),
+		unfurler: newCommandUnfurler(),
+		policies: newDefaultPolicySet(),
 	}
 	v.warnOnInterpreters()
 	return v
@@ -86,36 +90,31 @@ func (v *SecurityValidator) validateCommand(command string) error {
 	return v.validateExecutableCommand(command)
 }
 
-// validateExecutableCommand validates commands using the secure executable allowlist approach
+// validateExecutableCommand validates commands using the secure executable
+// allowlist approach. The command is parsed into an AST and accepted only if it
+// is a single, fully-literal simple command (structural whitelist); the
+// resolved argv is then checked against the executable allowlist, per-tool
+// argument policies, and the blocked_patterns/blocked_commands filters.
 func (v *SecurityValidator) validateExecutableCommand(command string) error {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return fmt.Errorf("empty command")
+	res := v.unfurler.unfurl(command)
+	if !res.Allowed {
+		return fmt.Errorf("command rejected in secure mode: %s", res.Reason)
 	}
 
-	// Check for shell metacharacters first - reject commands that try to use shell features
-	if containsShellMetacharacters(command) {
-		return fmt.Errorf("command contains shell metacharacters (not allowed in secure mode): %s", command)
-	}
+	executable := res.Argv[0]
 
-	// Check for dangerous shell constructs in the entire command
-	if containsDangerousShellConstructs(command) {
-		return fmt.Errorf("command contains dangerous shell constructs (not allowed in secure mode): %s", command)
-	}
-
-	// Simple whitespace-based splitting to get the executable
-	parts := strings.Fields(command)
-	if len(parts) == 0 {
-		return fmt.Errorf("no command found")
-	}
-
-	executable := parts[0]
-
-	// Check if the executable is in the allowlist
 	for _, allowed := range v.config.AllowedExecutables {
 		if v.matchesExecutable(executable, allowed) {
-			// Executable allowed - now apply blocked_patterns and blocked_commands
-			// to restrict specific arguments (e.g. block "git remote -v" while allowing git)
+			// An interpreter defeats the allowlist by executing whatever it is
+			// handed. Hard-deny it unless a per-tool policy governs its arguments.
+			if isInterpreterExecutable(filepath.Base(executable)) && !v.policies.governs(executable) {
+				return fmt.Errorf("executable '%s' is an interpreter and cannot be allowed in secure mode", executable)
+			}
+			if err := v.policies.check(res.Argv); err != nil {
+				return err
+			}
+			// Apply blocked_patterns and blocked_commands to restrict specific
+			// arguments (e.g. block "git remote -v" while allowing git).
 			if err := v.checkBlockedPatternsAndCommands(command); err != nil {
 				return err
 			}
@@ -157,33 +156,6 @@ func (v *SecurityValidator) matchesExecutable(executable, pattern string) bool {
 		}
 	}
 
-	return false
-}
-
-// containsShellMetacharacters checks if a string contains shell metacharacters
-// that could be used for command injection
-func containsShellMetacharacters(s string) bool {
-	// '!' is included because git interprets `-c alias.x=!cmd` as a shell alias,
-	// turning an allowlisted git into arbitrary command execution.
-	metachars := "|&;<>(){}[]$`\\!"
-	for _, char := range s {
-		if strings.ContainsRune(metachars, char) {
-			return true
-		}
-	}
-	return false
-}
-
-// containsDangerousShellConstructs checks for potentially dangerous shell constructs
-func containsDangerousShellConstructs(s string) bool {
-	dangerous := []string{
-		"$(", "`", "${", "&&", "||", ";", "|", ">", "<", ">>", "<<", "&", "=!",
-	}
-	for _, construct := range dangerous {
-		if strings.Contains(s, construct) {
-			return true
-		}
-	}
 	return false
 }
 

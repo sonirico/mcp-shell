@@ -138,6 +138,7 @@ func TestSecurityValidator_validateCommand(t *testing.T) {
 			errorContains: "blocked keyword",
 		},
 		// GHSA-74hp-mggr-hv58: git shell-alias bypass via `-c alias.x=!cmd`.
+		// Now caught by the per-tool git argument policy, not metacharacters.
 		{
 			name: "secure mode blocks git shell-alias injection",
 			config: SecurityConfig{
@@ -147,7 +148,7 @@ func TestSecurityValidator_validateCommand(t *testing.T) {
 			},
 			command:       "git -c alias.pwn=!touch pwn /tmp/target",
 			expectError:   true,
-			errorContains: "shell metacharacters",
+			errorContains: "config injection",
 		},
 		// GHSA-3x77-wg38-92r3: an interpreter still has to be in the allowlist
 		// to be reachable; bash absent from the list is rejected outright.
@@ -430,11 +431,10 @@ func TestSecurityValidator_vulnerability_scenarios(t *testing.T) {
 				err := validator.validateCommand(payload.command)
 				if err != nil {
 					assert.Error(t, err, "Secure mode should block: %s", payload.description)
-					// Check for either error message since they both indicate blocking
+					// Any of these messages indicates the command was blocked.
 					errorMsg := err.Error()
 					shouldContainOne := strings.Contains(errorMsg, "not in allowed list") ||
-						strings.Contains(errorMsg, "shell metacharacters") ||
-						strings.Contains(errorMsg, "dangerous shell constructs")
+						strings.Contains(errorMsg, "rejected in secure mode")
 					assert.True(t, shouldContainOne, "Error should indicate blocking: %s", errorMsg)
 				} else {
 					t.Errorf("Secure mode should block: %s", payload.description)

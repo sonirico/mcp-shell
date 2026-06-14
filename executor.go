@@ -34,14 +34,16 @@ type SecurityInfo struct {
 }
 
 type CommandExecutor struct {
-	config SecurityConfig
-	logger zerolog.Logger
+	config   SecurityConfig
+	logger   zerolog.Logger
+	unfurler *commandUnfurler
 }
 
 func newCommandExecutor(cfg SecurityConfig, logger zerolog.Logger) *CommandExecutor {
 	return &CommandExecutor{
-		config: cfg,
-		logger: logger.With().Str("component", "executor").Logger(),
+		config:   cfg,
+		logger:   logger.With().Str("component", "executor").Logger(),
+		unfurler: newCommandUnfurler(),
 	}
 }
 
@@ -97,40 +99,6 @@ func (e *CommandExecutor) execute(
 	return result, nil
 }
 
-// parseCommand securely parses a command string into executable and arguments
-// without using shell interpretation. This prevents command injection through
-// shell metacharacters and substitution.
-func (e *CommandExecutor) parseCommand(command string) (string, []string, error) {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return "", nil, fmt.Errorf("empty command")
-	}
-
-	// Simple whitespace-based splitting - no shell interpretation
-	parts := strings.Fields(command)
-	if len(parts) == 0 {
-		return "", nil, fmt.Errorf("no command found")
-	}
-
-	executable := parts[0]
-	args := parts[1:]
-
-	// Validate that the executable doesn't contain shell metacharacters
-	if containsShellMetacharacters(executable) {
-		return "", nil, fmt.Errorf("executable contains shell metacharacters: %s", executable)
-	}
-
-	// Validate arguments don't contain dangerous shell constructs
-	// In secure mode, this should be an error, not just a warning
-	for _, arg := range args {
-		if containsDangerousShellConstructs(arg) {
-			return "", nil, fmt.Errorf("argument contains dangerous shell constructs: %s", arg)
-		}
-	}
-
-	return executable, args, nil
-}
-
 func (e *CommandExecutor) executeSecureCommand(
 	ctx context.Context,
 	command string,
@@ -145,22 +113,23 @@ func (e *CommandExecutor) executeSecureCommand(
 			Msg("Using legacy shell execution mode - vulnerable to injection attacks")
 		cmd = exec.CommandContext(ctx, "bash", "-c", command)
 	} else {
-		// Secure execution: parse command and execute directly
-		executable, args, err := e.parseCommand(command)
-		if err != nil {
+		// Secure execution: parse the command into a literal argv and execute it
+		// directly, using the same unfurler the validator used.
+		res := e.unfurler.unfurl(command)
+		if !res.Allowed {
 			e.logger.Error().
-				Err(err).
 				Str("command", command).
+				Str("reason", res.Reason).
 				Msg("Failed to parse command securely")
-			return nil, fmt.Errorf("command parsing failed: %w", err)
+			return nil, fmt.Errorf("command parsing failed: %s", res.Reason)
 		}
 
 		e.logger.Debug().
-			Str("executable", executable).
-			Strs("args", args).
+			Str("executable", res.Argv[0]).
+			Strs("args", res.Argv[1:]).
 			Msg("Executing command with direct execution")
 
-		cmd = exec.CommandContext(ctx, executable, args...)
+		cmd = exec.CommandContext(ctx, res.Argv[0], res.Argv[1:]...)
 	}
 
 	if e.config.WorkingDirectory != "" {
