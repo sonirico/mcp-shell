@@ -148,7 +148,7 @@ make release            # binary + docker image
 ## Security
 
 - **Default**: Secure mode, restricted to a narrow allowlist of read-only utilities. No interpreters.
-- **Secure mode** (`use_shell_execution: false`): the command is parsed into a shell AST and only a single, fully-literal simple command is accepted (no pipes, lists, substitution, redirection or globs); its executable must be on the allowlist. Interpreters (bash/sh/python) are hard-denied even if allowlisted, and per-tool policies strip escape hatches (`git -c`, `find -exec`, `tar --checkpoint-action`). This is an early-reject layer, not a sandbox.
+- **Secure mode** (`use_shell_execution: false`): the command is parsed into a shell AST and only a single, fully-literal simple command is accepted (no pipes, lists, substitution, redirection or globs); its executable must be on the allowlist. Interpreters (bash/sh/python) are hard-denied even if allowlisted, and per-tool policies are deny-by-default: for governed binaries (`git`, `find`, `sort`, `tar`) only explicitly safe flags are accepted and everything else, including unknown or future escape-hatch flags, is rejected (`git -c`/`config`, `find -exec`/`-fls`, `sort -o`/`--compress-program`, `tar -I`/`-C`). Git is limited to read-only subcommands. This is an early-reject layer, not a sandbox.
 - **Unrestricted**: Only via `MCP_SHELL_ALLOW_UNSAFE=true`. Full access; fine for local dev, dangerous otherwise.
 - **Docker**: Runs as non-root, Alpine-based. Use it in production. Best paired with an OS sandbox (read-only FS, dropped caps) as defense-in-depth.
 

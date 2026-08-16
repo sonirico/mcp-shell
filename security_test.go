@@ -101,16 +101,18 @@ func TestSecurityValidator_validateCommand(t *testing.T) {
 			expectError:   true,
 			errorContains: "blocked pattern",
 		},
-		// Issue #7: blocked_patterns in secure mode
+		// Issue #7: blocked_patterns in secure mode. The command must pass the
+		// per-tool arg policy first (git log --oneline is allowed) so that the
+		// operator-configured pattern is what rejects it.
 		{
-			name: "secure mode with blocked_patterns - blocks git remote -v",
+			name: "secure mode with blocked_patterns - operator pattern blocks allowed command",
 			config: SecurityConfig{
 				Enabled:            true,
 				UseShellExecution:  false,
 				AllowedExecutables: []string{"git"},
-				BlockedPatterns:    []string{`(^|\s)remote\s+(-v|--verbose)(\s|$)`},
+				BlockedPatterns:    []string{`(^|\s)--oneline(\s|$)`},
 			},
-			command:       "git remote -v",
+			command:       "git log --oneline",
 			expectError:   true,
 			errorContains: "blocked pattern",
 		},

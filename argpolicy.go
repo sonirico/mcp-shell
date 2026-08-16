@@ -30,7 +30,7 @@ func newPolicySet(policies ...argPolicy) *policySet {
 }
 
 func newDefaultPolicySet() *policySet {
-	return newPolicySet(newGitArgPolicy(), newFindArgPolicy(), newTarArgPolicy())
+	return newPolicySet(newGitArgPolicy(), newFindArgPolicy(), newTarArgPolicy(), newSortArgPolicy())
 }
 
 // governs reports whether a policy exists for the executable's basename.
@@ -49,62 +49,302 @@ func (s *policySet) check(argv []string) error {
 	return nil
 }
 
-// gitArgPolicy blocks git's config-injection and alias-as-shell escape hatches.
+// stringSet is a membership set of exact tokens (long flags, whole-word primaries).
+type stringSet map[string]struct{}
+
+func newStringSet(items ...string) stringSet {
+	s := make(stringSet, len(items))
+	for _, it := range items {
+		s[it] = struct{}{}
+	}
+	return s
+}
+
+func (s stringSet) has(k string) bool {
+	_, ok := s[k]
+	return ok
+}
+
+// byteSet is a membership set of single-letter short flags for cluster parsing.
+type byteSet map[byte]struct{}
+
+func newByteSet(letters string) byteSet {
+	s := make(byteSet, len(letters))
+	for i := 0; i < len(letters); i++ {
+		s[letters[i]] = struct{}{}
+	}
+	return s
+}
+
+func (s byteSet) has(b byte) bool {
+	_, ok := s[b]
+	return ok
+}
+
+// isFlagToken reports whether argv token is a flag. "-" and "--" are bare
+// tokens (stdin marker, end-of-options convention) and are not flags.
+func isFlagToken(tok string) bool {
+	return len(tok) > 0 && tok[0] == '-' && tok != "-" && tok != "--"
+}
+
+// longFlagName strips a "--name=value" token down to "--name".
+func longFlagName(tok string) string {
+	if i := strings.IndexByte(tok, '='); i >= 0 {
+		return tok[:i]
+	}
+	return tok
+}
+
+// checkShortCluster walks a bundled short-flag token (e.g. "-nrk2") letter by
+// letter. Every letter must be in allowed or the cluster is rejected via
+// onReject. Hitting a letter in argTaking stops the scan: the remainder of
+// the cluster is that flag's value, not further flags.
+func checkShortCluster(tok string, allowed, argTaking byteSet, onReject func(c byte, tok string) error) error {
+	letters := tok[1:]
+	for i := 0; i < len(letters); i++ {
+		c := letters[i]
+		if !allowed.has(c) {
+			return onReject(c, tok)
+		}
+		if argTaking.has(c) {
+			return nil
+		}
+	}
+	return nil
+}
+
+// gitArgPolicy is deny-by-default on both global flags and subcommands. Global
+// flags before the subcommand must be allowlisted (that is where -c/--config-env
+// and --exec-path live), and the subcommand itself must be one of a read-only
+// set: git config writes are an RCE primitive (alias.*, diff.external, pagers),
+// and mutating/network subcommands are outside this sandbox's contract. grep is
+// deliberately excluded: git grep -O runs the pager string as a shell command
+// and its short-flag form (-iO<cmd>) cannot be denied without false-positives on
+// legitimate pattern values. The remaining always-dangerous flags are all long
+// forms (git never bundles those), so gitDeniedFlag needs no cluster walk.
 type gitArgPolicy struct{}
 
 func newGitArgPolicy() *gitArgPolicy { return &gitArgPolicy{} }
 
 func (*gitArgPolicy) name() string { return "git" }
 
+var gitAllowedGlobal = newStringSet(
+	"--no-pager", "--paginate", "--bare",
+	"--literal-pathspecs", "--no-optional-locks",
+)
+
+// gitAllowedSubcommands are read-only: they cannot mutate refs, the working
+// tree, config, or reach the network. --git-dir/--work-tree are deliberately
+// not allowed globals, so these cannot be retargeted at an arbitrary path.
+var gitAllowedSubcommands = newStringSet(
+	"status", "log", "show", "diff", "branch", "tag", "describe",
+	"rev-parse", "rev-list", "ls-files", "ls-tree", "cat-file", "blame",
+	"shortlog", "reflog", "whatchanged", "symbolic-ref", "name-rev",
+	"merge-base", "for-each-ref", "count-objects", "var", "show-ref",
+	"show-branch",
+)
+
+// gitDeniedFlag reports flags that are dangerous under any allowed subcommand:
+// --output (diff/log/show write to an arbitrary file), --ext-diff (runs
+// diff.external), --open-files-in-pager (runs the pager as a command), and
+// --contents (blame reads an arbitrary file into the output). All are long
+// forms, so an exact/prefix name test suffices - git does not bundle these.
+func gitDeniedFlag(tok string) bool {
+	switch longFlagName(tok) {
+	case "--output", "--open-files-in-pager", "--ext-diff", "--contents":
+		return true
+	}
+	return false
+}
+
 func (*gitArgPolicy) check(argv []string) error {
+	seenSubcommand := false
 	for _, a := range argv[1:] {
-		if a == "-c" || a == "--config-env" {
-			return fmt.Errorf("git: -c/--config-env config injection is not allowed in secure mode")
+		if !seenSubcommand {
+			if !isFlagToken(a) {
+				if !gitAllowedSubcommands.has(a) {
+					return fmt.Errorf("git: subcommand %q is not allowed in secure mode", a)
+				}
+				seenSubcommand = true
+				continue
+			}
+			if a == "-c" || strings.HasPrefix(a, "--config-env") {
+				return fmt.Errorf("git: %q is a config injection vector and is not allowed in secure mode", a)
+			}
+			if strings.HasPrefix(a, "--exec-path") {
+				return fmt.Errorf("git: %q can execute arbitrary programs via exec-path and is not allowed in secure mode", a)
+			}
+			if strings.HasPrefix(a, "--") && gitAllowedGlobal.has(longFlagName(a)) {
+				continue
+			}
+			return fmt.Errorf("git: %q is not allowed in secure mode", a)
 		}
-		if strings.HasPrefix(a, "--exec-path") ||
-			strings.HasPrefix(a, "--upload-pack") ||
-			strings.HasPrefix(a, "--receive-pack") {
-			return fmt.Errorf("git: %q can execute arbitrary programs and is not allowed in secure mode", a)
+		if isFlagToken(a) && gitDeniedFlag(a) {
+			return fmt.Errorf("git: %q is not allowed in secure mode", a)
 		}
 	}
 	return nil
 }
 
-// findArgPolicy blocks find's action primaries that spawn processes or mutate.
+// findArgPolicy allowlists find's query/reporting primaries. Every action
+// primary that spawns a process or mutates the filesystem is unlisted, so
+// unknown or future primaries fail closed instead of slipping through.
 type findArgPolicy struct{}
 
 func newFindArgPolicy() *findArgPolicy { return &findArgPolicy{} }
 
 func (*findArgPolicy) name() string { return "find" }
 
+var findAllowed = newStringSet(
+	"-name", "-iname", "-path", "-ipath", "-regex", "-iregex", "-type", "-maxdepth", "-mindepth", "-depth", "-d",
+	"-print", "-print0", "-printf", "-ls", "-size", "-empty", "-perm", "-user", "-uid", "-group", "-gid", "-nouser", "-nogroup",
+	"-mtime", "-atime", "-ctime", "-mmin", "-amin", "-cmin", "-newer", "-newermt", "-anewer", "-cnewer", "-used",
+	"-not", "-a", "-and", "-o", "-or", "-true", "-false",
+	"-prune", "-quit", "-follow", "-xdev", "-mount", "-samefile", "-inum", "-links", "-readable", "-writable", "-executable",
+	"-lname", "-ilname", "-fstype", "-context", "-L", "-H", "-P",
+)
+
 func (*findArgPolicy) check(argv []string) error {
-	blocked := map[string]struct{}{
-		"-exec": {}, "-execdir": {}, "-ok": {}, "-okdir": {},
-		"-fprintf": {}, "-fprint": {}, "-fprint0": {}, "-delete": {},
-	}
 	for _, a := range argv[1:] {
-		if _, bad := blocked[a]; bad {
+		if !isFlagToken(a) {
+			continue
+		}
+		if !findAllowed.has(a) {
 			return fmt.Errorf("find: %q is not allowed in secure mode", a)
 		}
 	}
 	return nil
 }
 
-// tarArgPolicy blocks tar options that run an external command.
+// sortArgPolicy allowlists sort's ordering/formatting flags. -o/--output
+// (arbitrary file write) and --compress-program (arbitrary execution) are the
+// canonical escape hatches; everything else unlisted fails closed too.
+type sortArgPolicy struct{}
+
+func newSortArgPolicy() *sortArgPolicy { return &sortArgPolicy{} }
+
+func (*sortArgPolicy) name() string { return "sort" }
+
+var (
+	// -T/--temporary-directory is arg-taking (so its value is consumed) but not
+	// allowed: it plants a caller-controlled temp file in an attacker-chosen dir.
+	sortAllowedShort = newByteSet("bdfgiMhnRrsuzcCktSV")
+	sortArgTaking    = newByteSet("ktoST")
+	sortAllowedLong  = newStringSet(
+		"--ignore-leading-blanks", "--dictionary-order", "--ignore-case",
+		"--general-numeric-sort", "--ignore-nonprinting", "--month-sort",
+		"--human-numeric-sort", "--numeric-sort", "--random-sort", "--reverse",
+		"--sort", "--stable", "--unique", "--zero-terminated", "--check",
+		"--key", "--field-separator", "--buffer-size", "--version-sort",
+		"--parallel", "--debug", "--help", "--version", "--random-source",
+	)
+)
+
+func sortRejectLetter(c byte, tok string) error {
+	if c == 'o' {
+		return fmt.Errorf("sort: %q writes to an arbitrary file and is not allowed in secure mode", tok)
+	}
+	return fmt.Errorf("sort: %q is not allowed in secure mode", tok)
+}
+
+func (*sortArgPolicy) check(argv []string) error {
+	for _, a := range argv[1:] {
+		if !isFlagToken(a) {
+			continue
+		}
+		if strings.HasPrefix(a, "--") {
+			name := longFlagName(a)
+			if sortAllowedLong.has(name) {
+				continue
+			}
+			switch name {
+			case "--output":
+				return fmt.Errorf("sort: %q writes to an arbitrary file and is not allowed in secure mode", a)
+			case "--compress-program":
+				return fmt.Errorf("sort: %q can execute arbitrary programs and is not allowed in secure mode", a)
+			default:
+				return fmt.Errorf("sort: %q is not allowed in secure mode", a)
+			}
+		}
+		if err := checkShortCluster(a, sortAllowedShort, sortArgTaking, sortRejectLetter); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// tarArgPolicy allowlists tar's archive-operation flags. -I/--use-compress-program
+// and the checkpoint/remote-shell hooks execute arbitrary programs; everything
+// else unlisted fails closed too.
 type tarArgPolicy struct{}
 
 func newTarArgPolicy() *tarArgPolicy { return &tarArgPolicy{} }
 
 func (*tarArgPolicy) name() string { return "tar" }
 
+var (
+	// -C (arg-taking) and -p are consumed but not allowed: -C relocates the
+	// extraction/archive root outside the sandbox working dir, and -p restores
+	// setuid/setgid bits from an attacker-supplied archive.
+	tarAllowedShort = newByteSet("cxtruvzjJfkmOSw")
+	tarArgTaking    = newByteSet("fCTXbIKNLVg")
+	tarAllowedLong  = newStringSet(
+		"--create", "--extract", "--list", "--append", "--update", "--verbose",
+		"--gzip", "--bzip2", "--xz", "--file", "--exclude",
+		"--exclude-from", "--no-same-owner", "--keep-old-files", "--to-stdout",
+		"--strip-components", "--wildcards", "--anchored", "--numeric-owner",
+		"--owner", "--group", "--mode", "--help", "--version",
+	)
+)
+
+func tarRejectLetter(c byte, tok string) error {
+	switch c {
+	case 'I':
+		return fmt.Errorf("tar: %q can execute arbitrary programs and is not allowed in secure mode", tok)
+	case 'C':
+		return fmt.Errorf("tar: %q relocates the archive root outside the sandbox and is not allowed in secure mode", tok)
+	case 'p':
+		return fmt.Errorf("tar: %q restores setuid bits from the archive and is not allowed in secure mode", tok)
+	}
+	return fmt.Errorf("tar: %q is not allowed in secure mode", tok)
+}
+
 func (*tarArgPolicy) check(argv []string) error {
+	// tar's historic bundled form puts the function letters in the first word
+	// with no leading dash ("tar xzf a.tar" == "tar -xzf a.tar"). Such a token
+	// fails isFlagToken and would otherwise skip checkShortCluster entirely, so
+	// "tar xfC a.tar /dst" would smuggle -C past the policy. Validate the first
+	// word letter by letter here. Unlike getopt clusters, every letter is an
+	// option (its value comes from a later word), so there is no arg-taking stop.
+	if len(argv) > 1 && len(argv[1]) > 0 && argv[1][0] != '-' {
+		for i := 0; i < len(argv[1]); i++ {
+			if c := argv[1][i]; !tarAllowedShort.has(c) {
+				return tarRejectLetter(c, argv[1])
+			}
+		}
+	}
 	for _, a := range argv[1:] {
-		if a == "-I" ||
-			strings.HasPrefix(a, "--to-command") ||
-			strings.HasPrefix(a, "--checkpoint-action") ||
-			strings.HasPrefix(a, "--use-compress-program") ||
-			strings.HasPrefix(a, "--rsh-command") {
-			return fmt.Errorf("tar: %q can execute arbitrary programs and is not allowed in secure mode", a)
+		if !isFlagToken(a) {
+			continue
+		}
+		if strings.HasPrefix(a, "--") {
+			name := longFlagName(a)
+			if tarAllowedLong.has(name) {
+				continue
+			}
+			switch name {
+			case "--to-command", "--checkpoint-action", "--use-compress-program", "--rsh-command":
+				return fmt.Errorf("tar: %q can execute arbitrary programs and is not allowed in secure mode", a)
+			case "--directory":
+				return fmt.Errorf("tar: %q relocates the archive root outside the sandbox and is not allowed in secure mode", a)
+			case "--preserve-permissions", "--same-permissions":
+				return fmt.Errorf("tar: %q restores setuid bits from the archive and is not allowed in secure mode", a)
+			default:
+				return fmt.Errorf("tar: %q is not allowed in secure mode", a)
+			}
+		}
+		if err := checkShortCluster(a, tarAllowedShort, tarArgTaking, tarRejectLetter); err != nil {
+			return err
 		}
 	}
 	return nil
