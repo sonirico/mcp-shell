@@ -81,9 +81,6 @@ func (v *SecurityValidator) validateCommand(command string) error {
 	// If no allowed executables are configured but security is enabled,
 	// block everything for safety
 	if len(v.config.AllowedExecutables) == 0 {
-		v.logger.Warn().
-			Str("command", command).
-			Msg("No allowed executables configured - blocking all commands")
 		return fmt.Errorf("no allowed executables configured - all commands blocked for security")
 	}
 
@@ -126,10 +123,6 @@ func (v *SecurityValidator) validateExecutableCommand(command string) error {
 		}
 	}
 
-	v.logger.Warn().
-		Str("executable", executable).
-		Strs("allowed_executables", v.config.AllowedExecutables).
-		Msg("Executable not in allowed list")
 	return fmt.Errorf("executable '%s' not in allowed list", executable)
 }
 
@@ -164,20 +157,12 @@ func (v *SecurityValidator) matchesExecutable(executable, pattern string) bool {
 func (v *SecurityValidator) checkBlockedPatternsAndCommands(command string) error {
 	for _, pattern := range v.config.BlockedPatterns {
 		if matched, err := regexp.MatchString(pattern, command); err == nil && matched {
-			v.logger.Warn().
-				Str("command", command).
-				Str("pattern", pattern).
-				Msg("Command blocked by pattern")
 			return fmt.Errorf("command matches blocked pattern: %s", pattern)
 		}
 	}
 
 	for _, blocked := range v.config.BlockedCommands {
 		if strings.Contains(command, blocked) {
-			v.logger.Warn().
-				Str("command", command).
-				Str("blocked_keyword", blocked).
-				Msg("Command contains blocked keyword")
 			return fmt.Errorf("command contains blocked keyword: %s", blocked)
 		}
 	}
@@ -199,10 +184,6 @@ func (v *SecurityValidator) validateLegacyCommand(command string) error {
 			}
 		}
 		if !allowed {
-			v.logger.Warn().
-				Str("command", command).
-				Strs("allowed_commands", v.config.AllowedCommands).
-				Msg("Command not in allowed list")
 			return fmt.Errorf("command not in allowed list")
 		}
 	}

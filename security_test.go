@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -257,8 +259,16 @@ func TestSecurityValidator_validateExecutableCommand(t *testing.T) {
 }
 
 func TestSecurityValidator_matchesExecutable(t *testing.T) {
+	// Not parallel: uses t.Setenv to control PATH so the basename-in-PATH
+	// branch is hermetic instead of depending on whatever the host has installed.
 	logger := zerolog.New(zerolog.NewTestWriter(t))
 	validator := newSecurityValidator(SecurityConfig{}, logger)
+
+	// A real executable in a controlled PATH: exec.LookPath must resolve it.
+	binDir := t.TempDir()
+	toolPath := filepath.Join(binDir, "mytool")
+	require.NoError(t, os.WriteFile(toolPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", binDir)
 
 	tests := []struct {
 		name       string
@@ -280,20 +290,32 @@ func TestSecurityValidator_matchesExecutable(t *testing.T) {
 		},
 		{
 			name:       "absolute path exact match",
-			executable: "/usr/bin/git",
-			pattern:    "/usr/bin/git",
+			executable: toolPath,
+			pattern:    toolPath,
 			expected:   true,
 		},
 		{
-			name:       "basename match for command in PATH",
-			executable: "git",
-			pattern:    "git",
-			expected:   true, // This should work if git is in PATH
+			name:       "absolute path pattern mismatch",
+			executable: "/usr/bin/git",
+			pattern:    "/bin/git",
+			expected:   false,
 		},
 		{
-			name:       "absolute path vs basename no match",
-			executable: "/usr/bin/git",
-			pattern:    "git",
+			name:       "basename match resolves via PATH",
+			executable: "mytool",
+			pattern:    "mytool",
+			expected:   true,
+		},
+		{
+			name:       "basename not on PATH does not match",
+			executable: "./definitely_absent_zzz",
+			pattern:    "definitely_absent_zzz",
+			expected:   false,
+		},
+		{
+			name:       "absolute executable vs basename pattern no match",
+			executable: toolPath,
+			pattern:    "mytool",
 			expected:   false,
 		},
 	}
