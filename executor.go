@@ -16,23 +16,6 @@ import (
 	"github.com/rs/zerolog"
 )
 
-type ExecutionResult struct {
-	Status        string        `json:"status"`
-	ExitCode      int           `json:"exit_code"`
-	Stdout        string        `json:"stdout"`
-	Stderr        string        `json:"stderr"`
-	Command       string        `json:"command"`
-	ExecutionTime time.Duration `json:"execution_time"`
-	SecurityInfo  *SecurityInfo `json:"security_info,omitempty"`
-}
-
-type SecurityInfo struct {
-	SecurityEnabled bool   `json:"security_enabled"`
-	WorkingDir      string `json:"working_dir,omitempty"`
-	RunAsUser       string `json:"run_as_user,omitempty"`
-	TimeoutApplied  bool   `json:"timeout_applied"`
-}
-
 type CommandExecutor struct {
 	config   SecurityConfig
 	logger   zerolog.Logger
@@ -69,10 +52,6 @@ func (e *CommandExecutor) execute(
 
 	result, err := e.executeSecureCommand(cmdCtx, command, useBase64)
 	if err != nil {
-		e.logger.Error().
-			Err(err).
-			Str("command", command).
-			Msg("Command execution failed")
 		return nil, err
 	}
 
@@ -117,10 +96,6 @@ func (e *CommandExecutor) executeSecureCommand(
 		// directly, using the same unfurler the validator used.
 		res := e.unfurler.unfurl(command)
 		if !res.Allowed {
-			e.logger.Error().
-				Str("command", command).
-				Str("reason", res.Reason).
-				Msg("Failed to parse command securely")
 			return nil, fmt.Errorf("command parsing failed: %s", res.Reason)
 		}
 
@@ -133,32 +108,39 @@ func (e *CommandExecutor) executeSecureCommand(
 	}
 
 	if e.config.WorkingDirectory != "" {
-		if err := os.MkdirAll(e.config.WorkingDirectory, 0755); err == nil {
-			cmd.Dir = e.config.WorkingDirectory
-			e.logger.Debug().
-				Str("working_dir", e.config.WorkingDirectory).
-				Msg("Set working directory")
+		if err := os.MkdirAll(e.config.WorkingDirectory, 0o755); err != nil {
+			return nil, fmt.Errorf("create working directory %q: %w", e.config.WorkingDirectory, err)
 		}
+		cmd.Dir = e.config.WorkingDirectory
+		e.logger.Debug().
+			Str("working_dir", e.config.WorkingDirectory).
+			Msg("Set working directory")
 	}
 
 	if e.config.RunAsUser != "" {
-		if u, err := user.Lookup(e.config.RunAsUser); err == nil {
-			if uid, err := strconv.Atoi(u.Uid); err == nil {
-				if gid, err := strconv.Atoi(u.Gid); err == nil {
-					cmd.SysProcAttr = &syscall.SysProcAttr{
-						Credential: &syscall.Credential{
-							Uid: uint32(uid),
-							Gid: uint32(gid),
-						},
-					}
-					e.logger.Debug().
-						Str("user", e.config.RunAsUser).
-						Int("uid", uid).
-						Int("gid", gid).
-						Msg("Set process credentials")
-				}
-			}
+		u, err := user.Lookup(e.config.RunAsUser)
+		if err != nil {
+			return nil, fmt.Errorf("resolve run-as user %q: %w", e.config.RunAsUser, err)
 		}
+		uid, err := strconv.Atoi(u.Uid)
+		if err != nil {
+			return nil, fmt.Errorf("resolve run-as user %q: parse uid %q: %w", e.config.RunAsUser, u.Uid, err)
+		}
+		gid, err := strconv.Atoi(u.Gid)
+		if err != nil {
+			return nil, fmt.Errorf("resolve run-as user %q: parse gid %q: %w", e.config.RunAsUser, u.Gid, err)
+		}
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Credential: &syscall.Credential{
+				Uid: uint32(uid),
+				Gid: uint32(gid),
+			},
+		}
+		e.logger.Debug().
+			Str("user", e.config.RunAsUser).
+			Int("uid", uid).
+			Int("gid", gid).
+			Msg("Set process credentials")
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -169,17 +151,9 @@ func (e *CommandExecutor) executeSecureCommand(
 
 	if e.config.MaxOutputSize > 0 {
 		if stdoutBuf.Len() > e.config.MaxOutputSize {
-			e.logger.Warn().
-				Int("stdout_size", stdoutBuf.Len()).
-				Int("max_size", e.config.MaxOutputSize).
-				Msg("Stdout exceeds maximum size limit")
 			return nil, fmt.Errorf("stdout exceeds maximum size limit")
 		}
 		if stderrBuf.Len() > e.config.MaxOutputSize {
-			e.logger.Warn().
-				Int("stderr_size", stderrBuf.Len()).
-				Int("max_size", e.config.MaxOutputSize).
-				Msg("Stderr exceeds maximum size limit")
 			return nil, fmt.Errorf("stderr exceeds maximum size limit")
 		}
 	}

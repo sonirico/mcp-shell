@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -78,7 +80,9 @@ func TestCommandExecutor_executeSecureCommand_secure_vs_legacy(t *testing.T) {
 				}
 			} else {
 				require.NoError(t, err)
-				assert.NotNil(t, result)
+				require.NotNil(t, result)
+				assert.Equal(t, "success", result.Status)
+				assert.Equal(t, 0, result.ExitCode)
 			}
 		})
 	}
@@ -142,27 +146,81 @@ func TestCommandExecutor_vulnerability_prevention(t *testing.T) {
 		}
 	})
 
-	// Test with legacy execution (vulnerable - allows these)
-	t.Run("legacy_execution_allows_vulnerabilities", func(t *testing.T) {
+	// Legacy mode interprets shell metacharacters instead of rejecting them at
+	// the parse stage. Prove that with BENIGN meta commands - never run a
+	// destructive payload against the real filesystem to demonstrate it.
+	t.Run("legacy_execution_interprets_shell_metacharacters", func(t *testing.T) {
 		config := SecurityConfig{
 			UseShellExecution: true,
 			MaxExecutionTime:  time.Second * 5,
 		}
 		executor := newCommandExecutor(config, logger)
 
-		for _, vt := range vulnerabilityTests {
-			t.Run(vt.name, func(t *testing.T) {
-				// Note: We don't actually want these to succeed in tests,
-				// but we verify they reach the execution stage (not blocked by parsing)
-				_, err := executor.executeSecureCommand(ctx, vt.command, false)
-				// These may fail due to actual command execution, but should not fail due to parsing
-				if err != nil {
-					assert.NotContains(t, err.Error(), "shell metacharacters",
-						"Legacy mode should not block based on metacharacters")
-					assert.NotContains(t, err.Error(), "command parsing failed",
-						"Legacy mode should not fail at parsing stage")
-				}
+		metaTests := []struct {
+			name    string
+			command string
+			stdout  string
+		}{
+			{name: "list separator", command: "echo a && echo b", stdout: "a\nb"},
+			{name: "arithmetic expansion", command: "echo $((3+4))", stdout: "7"},
+			{name: "pipe", command: "printf abc | cat", stdout: "abc"},
+		}
+
+		for _, mt := range metaTests {
+			t.Run(mt.name, func(t *testing.T) {
+				result, err := executor.executeSecureCommand(ctx, mt.command, false)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				assert.Equal(t, "success", result.Status)
+				assert.Equal(t, mt.stdout, result.Stdout)
 			})
 		}
+	})
+}
+
+func TestCommandExecutor_failsClosedOnSetupErrors(t *testing.T) {
+	logger := zerolog.New(zerolog.NewTestWriter(t))
+	ctx := context.Background()
+
+	t.Run("unresolvable run-as user returns error", func(t *testing.T) {
+		config := SecurityConfig{
+			RunAsUser:        "nonexistent_user_zzz_123",
+			MaxExecutionTime: time.Second * 5,
+		}
+		executor := newCommandExecutor(config, logger)
+
+		_, err := executor.executeSecureCommand(ctx, "echo hi", false)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "resolve run-as user")
+	})
+
+	t.Run("uncreatable working directory returns error", func(t *testing.T) {
+		// A regular file cannot be a parent directory, so MkdirAll under it fails.
+		blocker := filepath.Join(t.TempDir(), "afile")
+		require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+		config := SecurityConfig{
+			WorkingDirectory: filepath.Join(blocker, "sub"),
+			MaxExecutionTime: time.Second * 5,
+		}
+		executor := newCommandExecutor(config, logger)
+
+		_, err := executor.executeSecureCommand(ctx, "echo hi", false)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "create working directory")
+	})
+
+	t.Run("output exceeding max size returns error", func(t *testing.T) {
+		config := SecurityConfig{
+			MaxOutputSize:    1,
+			MaxExecutionTime: time.Second * 5,
+		}
+		executor := newCommandExecutor(config, logger)
+
+		_, err := executor.executeSecureCommand(ctx, "echo hello", false)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeds maximum size limit")
 	})
 }
