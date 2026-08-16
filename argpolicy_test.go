@@ -123,6 +123,11 @@ func TestPolicySet_check(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:        "empty argv passes",
+			argv:        []string{},
+			expectError: false,
+		},
+		{
 			name:          "git unknown global flag blocked",
 			argv:          []string{"git", "--upload-pack=/x", "log"},
 			expectError:   true,

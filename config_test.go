@@ -11,11 +11,11 @@ import (
 )
 
 func TestLoadConfig_defaults(t *testing.T) {
-	// Clear environment variables
-	os.Unsetenv("MCP_SHELL_SEC_CONFIG_FILE")
-	os.Unsetenv("MCP_SHELL_SERVER_NAME")
-	os.Unsetenv("MCP_SHELL_LOG_LEVEL")
-	os.Unsetenv("MCP_SHELL_ALLOW_UNSAFE")
+	// Clear environment variables (getEnv/getBoolEnv treat "" as unset).
+	t.Setenv("MCP_SHELL_SEC_CONFIG_FILE", "")
+	t.Setenv("MCP_SHELL_SERVER_NAME", "")
+	t.Setenv("MCP_SHELL_LOG_LEVEL", "")
+	t.Setenv("MCP_SHELL_ALLOW_UNSAFE", "")
 
 	config, err := loadConfig()
 	require.NoError(t, err)
@@ -36,9 +36,8 @@ func TestLoadConfig_defaults(t *testing.T) {
 }
 
 func TestLoadConfig_allowUnsafeOptOut(t *testing.T) {
-	os.Unsetenv("MCP_SHELL_SEC_CONFIG_FILE")
-	os.Setenv("MCP_SHELL_ALLOW_UNSAFE", "true")
-	t.Cleanup(func() { os.Unsetenv("MCP_SHELL_ALLOW_UNSAFE") })
+	t.Setenv("MCP_SHELL_SEC_CONFIG_FILE", "")
+	t.Setenv("MCP_SHELL_ALLOW_UNSAFE", "true")
 
 	config, err := loadConfig()
 	require.NoError(t, err)
@@ -49,17 +48,10 @@ func TestLoadConfig_allowUnsafeOptOut(t *testing.T) {
 
 func TestLoadConfig_environment_variables(t *testing.T) {
 	// Set environment variables
-	os.Setenv("MCP_SHELL_SERVER_NAME", "test-server")
-	os.Setenv("MCP_SHELL_LOG_LEVEL", "debug")
-	os.Setenv("MCP_SHELL_LOG_FORMAT", "json")
-	os.Setenv("MCP_SHELL_LOG_OUTPUT", "stdout")
-
-	defer func() {
-		os.Unsetenv("MCP_SHELL_SERVER_NAME")
-		os.Unsetenv("MCP_SHELL_LOG_LEVEL")
-		os.Unsetenv("MCP_SHELL_LOG_FORMAT")
-		os.Unsetenv("MCP_SHELL_LOG_OUTPUT")
-	}()
+	t.Setenv("MCP_SHELL_SERVER_NAME", "test-server")
+	t.Setenv("MCP_SHELL_LOG_LEVEL", "debug")
+	t.Setenv("MCP_SHELL_LOG_FORMAT", "json")
+	t.Setenv("MCP_SHELL_LOG_OUTPUT", "stdout")
 
 	config, err := loadConfig()
 	require.NoError(t, err)
@@ -163,8 +155,7 @@ security:
 			require.NoError(t, err)
 
 			// Set environment variable
-			os.Setenv("MCP_SHELL_SEC_CONFIG_FILE", configFile)
-			defer os.Unsetenv("MCP_SHELL_SEC_CONFIG_FILE")
+			t.Setenv("MCP_SHELL_SEC_CONFIG_FILE", configFile)
 
 			config, err := loadConfig()
 
@@ -244,8 +235,7 @@ func TestValidateConfig(t *testing.T) {
 func TestGetEnv_functions(t *testing.T) {
 	t.Run("getEnv", func(t *testing.T) {
 		// Test with existing environment variable
-		os.Setenv("TEST_VAR", "test_value")
-		defer os.Unsetenv("TEST_VAR")
+		t.Setenv("TEST_VAR", "test_value")
 
 		value := getEnv("TEST_VAR", "default")
 		assert.Equal(t, "test_value", value)
@@ -257,19 +247,18 @@ func TestGetEnv_functions(t *testing.T) {
 
 	t.Run("getBoolEnv", func(t *testing.T) {
 		// Test with true value
-		os.Setenv("TEST_BOOL", "true")
-		defer os.Unsetenv("TEST_BOOL")
+		t.Setenv("TEST_BOOL", "true")
 
 		value := getBoolEnv("TEST_BOOL", false)
 		assert.True(t, value)
 
 		// Test with false value
-		os.Setenv("TEST_BOOL", "false")
+		t.Setenv("TEST_BOOL", "false")
 		value = getBoolEnv("TEST_BOOL", true)
 		assert.False(t, value)
 
 		// Test with invalid value (should return default)
-		os.Setenv("TEST_BOOL", "invalid")
+		t.Setenv("TEST_BOOL", "invalid")
 		value = getBoolEnv("TEST_BOOL", true)
 		assert.True(t, value)
 
@@ -280,14 +269,13 @@ func TestGetEnv_functions(t *testing.T) {
 
 	t.Run("getIntEnv", func(t *testing.T) {
 		// Test with valid integer
-		os.Setenv("TEST_INT", "42")
-		defer os.Unsetenv("TEST_INT")
+		t.Setenv("TEST_INT", "42")
 
 		value := getIntEnv("TEST_INT", 0)
 		assert.Equal(t, 42, value)
 
 		// Test with invalid integer (should return default)
-		os.Setenv("TEST_INT", "invalid")
+		t.Setenv("TEST_INT", "invalid")
 		value = getIntEnv("TEST_INT", 100)
 		assert.Equal(t, 100, value)
 
@@ -319,8 +307,7 @@ security:
 		err := os.WriteFile(configFile, []byte(yamlContent), 0644)
 		require.NoError(t, err)
 
-		os.Setenv("MCP_SHELL_SEC_CONFIG_FILE", configFile)
-		defer os.Unsetenv("MCP_SHELL_SEC_CONFIG_FILE")
+		t.Setenv("MCP_SHELL_SEC_CONFIG_FILE", configFile)
 
 		config, err := loadConfig()
 		require.NoError(t, err)
@@ -359,8 +346,7 @@ security:
 		err := os.WriteFile(configFile, []byte(yamlContent), 0644)
 		require.NoError(t, err)
 
-		os.Setenv("MCP_SHELL_SEC_CONFIG_FILE", configFile)
-		defer os.Unsetenv("MCP_SHELL_SEC_CONFIG_FILE")
+		t.Setenv("MCP_SHELL_SEC_CONFIG_FILE", configFile)
 
 		config, err := loadConfig()
 		require.NoError(t, err)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -143,12 +144,28 @@ func TestShellHandler_vulnerability_prevention_integration(t *testing.T) {
 		executor := newCommandExecutor(config, logger)
 		handler := newShellHandler(validator, executor, logger)
 
-		result, err := handler.handle(ctx, vulnerabilityRequest)
-		require.NoError(t, err)
+		// Benign shell-meta command: legacy mode invokes "bash -c" directly,
+		// so shell operators like "&&" are interpreted rather than rejected.
+		shellMetaRequest := mcp.CallToolRequest{}
+		shellMetaRequest.Params.Arguments = map[string]interface{}{
+			"command": "echo a && echo b",
+			"base64":  false,
+		}
 
-		// This demonstrates the vulnerability - legacy mode allows dangerous commands
-		// In a real attack, this would execute the obfuscated chmod
-		t.Logf("Legacy mode result - IsError: %v", result.IsError)
+		result, err := handler.handle(ctx, shellMetaRequest)
+		require.NoError(t, err)
+		require.False(t, result.IsError, "Legacy mode without blocks should let the command run")
+		require.Len(t, result.Content, 1)
+
+		textContent, ok := mcp.AsTextContent(result.Content[0])
+		require.True(t, ok, "Expected a text content result")
+
+		var response map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(textContent.Text), &response))
+
+		assert.Equal(t, "success", response["status"])
+		assert.Equal(t, "a\nb", response["stdout"],
+			"Shell operator '&&' should be interpreted, proving shell-based execution")
 	})
 
 	t.Run("legacy_mode_with_proper_blocks", func(t *testing.T) {
