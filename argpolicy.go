@@ -89,10 +89,8 @@ func isFlagToken(tok string) bool {
 
 // longFlagName strips a "--name=value" token down to "--name".
 func longFlagName(tok string) string {
-	if i := strings.IndexByte(tok, '='); i >= 0 {
-		return tok[:i]
-	}
-	return tok
+	name, _, _ := strings.Cut(tok, "=")
+	return name
 }
 
 // checkShortCluster walks a bundled short-flag token (e.g. "-nrk2") letter by
