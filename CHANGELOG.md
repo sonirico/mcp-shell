@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/sonirico/mcp-shell/compare/v0.7.2...v0.8.0) (2026-08-27)
+
+
+### Features
+
+* **security:** close the allowlisted-binary-runs-anything class (GHSA-gg85-6grh-63fp) with deny-by-default executable classification, minimal child environment, git repo-config neutralisation, write-time output cap, and rejection of relative argv[0] and NUL bytes ([#28](https://github.com/sonirico/mcp-shell/pull/28))
+
 ## [0.7.2](https://github.com/sonirico/mcp-shell/compare/v0.7.1...v0.7.2) (2026-08-27)
 
 
