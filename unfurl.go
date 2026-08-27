@@ -46,6 +46,12 @@ func (u *commandUnfurler) unfurl(command string) unfurlResult {
 	if strings.TrimSpace(command) == "" {
 		return unfurlResult{Reason: "empty command"}
 	}
+	// The parser silently drops NUL bytes, so a command carrying one would parse
+	// and execute as a different argv than the audited string. Reject it here,
+	// the single source both the validator and the executor share.
+	if strings.ContainsRune(command, 0) {
+		return unfurlResult{Reason: "command contains a NUL byte"}
+	}
 
 	parser := u.parsers.Get().(*syntax.Parser)
 	defer u.parsers.Put(parser)

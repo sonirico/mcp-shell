@@ -30,7 +30,10 @@ func newPolicySet(policies ...argPolicy) *policySet {
 }
 
 func newDefaultPolicySet() *policySet {
-	return newPolicySet(newGitArgPolicy(), newFindArgPolicy(), newTarArgPolicy(), newSortArgPolicy())
+	return newPolicySet(
+		newGitArgPolicy(), newFindArgPolicy(), newSortArgPolicy(),
+		newUniqArgPolicy(),
+	)
 }
 
 // governs reports whether a policy exists for the executable's basename.
@@ -131,9 +134,13 @@ var gitAllowedGlobal = newStringSet(
 	"--literal-pathspecs", "--no-optional-locks",
 )
 
-// gitAllowedSubcommands are read-only: they cannot mutate refs, the working
-// tree, config, or reach the network. --git-dir/--work-tree are deliberately
-// not allowed globals, so these cannot be retargeted at an arbitrary path.
+// gitAllowedSubcommands neither execute programs, write outside the repository,
+// nor reach the network. --git-dir/--work-tree are deliberately not allowed
+// globals, so none can be retargeted at an arbitrary path. They are not all
+// strictly read-only: branch, tag, symbolic-ref and reflog can still mutate refs
+// within the repository. That is bounded to the repo (no arbitrary-path write,
+// no execution) and is a lower-severity gap left open on purpose; the diff and
+// textconv drivers, which do execute programs, are suppressed in the executor.
 var gitAllowedSubcommands = newStringSet(
 	"status", "log", "show", "diff", "branch", "tag", "describe",
 	"rev-parse", "rev-list", "ls-files", "ls-tree", "cat-file", "blame",
@@ -144,12 +151,13 @@ var gitAllowedSubcommands = newStringSet(
 
 // gitDeniedFlag reports flags that are dangerous under any allowed subcommand:
 // --output (diff/log/show write to an arbitrary file), --ext-diff (runs
-// diff.external), --open-files-in-pager (runs the pager as a command), and
-// --contents (blame reads an arbitrary file into the output). All are long
+// diff.external), --open-files-in-pager (runs the pager as a command),
+// --contents (blame reads an arbitrary file into the output), and --textconv
+// (cat-file/blame/log run a repo-configured textconv program). All are long
 // forms, so an exact/prefix name test suffices - git does not bundle these.
 func gitDeniedFlag(tok string) bool {
 	switch longFlagName(tok) {
-	case "--output", "--open-files-in-pager", "--ext-diff", "--contents":
+	case "--output", "--open-files-in-pager", "--ext-diff", "--contents", "--textconv":
 		return true
 	}
 	return false
@@ -271,78 +279,67 @@ func (*sortArgPolicy) check(argv []string) error {
 	return nil
 }
 
-// tarArgPolicy allowlists tar's archive-operation flags. -I/--use-compress-program
-// and the checkpoint/remote-shell hooks execute arbitrary programs; everything
-// else unlisted fails closed too.
-type tarArgPolicy struct{}
+// uniqArgPolicy allowlists uniq's comparison/formatting flags and denies a
+// second positional operand: `uniq input output` writes to an arbitrary file,
+// the same escape-hatch class as find -fls and sort -o. Separate-value flags
+// (-f 2, --skip-fields 2) consume their value so it is not miscounted as an
+// operand.
+type uniqArgPolicy struct{}
 
-func newTarArgPolicy() *tarArgPolicy { return &tarArgPolicy{} }
+func newUniqArgPolicy() *uniqArgPolicy { return &uniqArgPolicy{} }
 
-func (*tarArgPolicy) name() string { return "tar" }
+func (*uniqArgPolicy) name() string { return "uniq" }
 
 var (
-	// -C (arg-taking) and -p are consumed but not allowed: -C relocates the
-	// extraction/archive root outside the sandbox working dir, and -p restores
-	// setuid/setgid bits from an attacker-supplied archive.
-	tarAllowedShort = newByteSet("cxtruvzjJfkmOSw")
-	tarArgTaking    = newByteSet("fCTXbIKNLVg")
-	tarAllowedLong  = newStringSet(
-		"--create", "--extract", "--list", "--append", "--update", "--verbose",
-		"--gzip", "--bzip2", "--xz", "--file", "--exclude",
-		"--exclude-from", "--no-same-owner", "--keep-old-files", "--to-stdout",
-		"--strip-components", "--wildcards", "--anchored", "--numeric-owner",
-		"--owner", "--group", "--mode", "--help", "--version",
+	uniqAllowedShort = newByteSet("cdDiuzfsw")
+	uniqArgTaking    = newByteSet("fsw")
+	uniqAllowedLong  = newStringSet(
+		"--count", "--repeated", "--all-repeated", "--ignore-case", "--unique",
+		"--zero-terminated", "--group", "--skip-fields", "--skip-chars",
+		"--check-chars", "--help", "--version",
 	)
+	// Long flags whose value may arrive as the next token instead of =value.
+	uniqLongValueSeparate = newStringSet("--skip-fields", "--skip-chars", "--check-chars")
 )
 
-func tarRejectLetter(c byte, tok string) error {
-	switch c {
-	case 'I':
-		return fmt.Errorf("tar: %q can execute arbitrary programs and is not allowed in secure mode", tok)
-	case 'C':
-		return fmt.Errorf("tar: %q relocates the archive root outside the sandbox and is not allowed in secure mode", tok)
-	case 'p':
-		return fmt.Errorf("tar: %q restores setuid bits from the archive and is not allowed in secure mode", tok)
-	}
-	return fmt.Errorf("tar: %q is not allowed in secure mode", tok)
+func uniqRejectLetter(_ byte, tok string) error {
+	return fmt.Errorf("uniq: %q is not allowed in secure mode", tok)
 }
 
-func (*tarArgPolicy) check(argv []string) error {
-	// tar's historic bundled form puts the function letters in the first word
-	// with no leading dash ("tar xzf a.tar" == "tar -xzf a.tar"). Such a token
-	// fails isFlagToken and would otherwise skip checkShortCluster entirely, so
-	// "tar xfC a.tar /dst" would smuggle -C past the policy. Validate the first
-	// word letter by letter here. Unlike getopt clusters, every letter is an
-	// option (its value comes from a later word), so there is no arg-taking stop.
-	if len(argv) > 1 && len(argv[1]) > 0 && argv[1][0] != '-' {
-		for i := 0; i < len(argv[1]); i++ {
-			if c := argv[1][i]; !tarAllowedShort.has(c) {
-				return tarRejectLetter(c, argv[1])
-			}
-		}
-	}
+func (*uniqArgPolicy) check(argv []string) error {
+	operands := 0
+	expectValue := false
+	optionsEnded := false
 	for _, a := range argv[1:] {
-		if !isFlagToken(a) {
+		if expectValue {
+			expectValue = false
 			continue
 		}
-		if strings.HasPrefix(a, "--") {
-			name := longFlagName(a)
-			if tarAllowedLong.has(name) {
+		if !optionsEnded && a == "--" {
+			optionsEnded = true
+			continue
+		}
+		if !optionsEnded && isFlagToken(a) {
+			if strings.HasPrefix(a, "--") {
+				name := longFlagName(a)
+				if !uniqAllowedLong.has(name) {
+					return fmt.Errorf("uniq: %q is not allowed in secure mode", a)
+				}
+				// Bare form ("--skip-fields 2"): the next token is the value.
+				expectValue = uniqLongValueSeparate.has(name) && name == a
 				continue
 			}
-			switch name {
-			case "--to-command", "--checkpoint-action", "--use-compress-program", "--rsh-command":
-				return fmt.Errorf("tar: %q can execute arbitrary programs and is not allowed in secure mode", a)
-			case "--directory":
-				return fmt.Errorf("tar: %q relocates the archive root outside the sandbox and is not allowed in secure mode", a)
-			case "--preserve-permissions", "--same-permissions":
-				return fmt.Errorf("tar: %q restores setuid bits from the archive and is not allowed in secure mode", a)
-			default:
-				return fmt.Errorf("tar: %q is not allowed in secure mode", a)
+			if err := checkShortCluster(a, uniqAllowedShort, uniqArgTaking, uniqRejectLetter); err != nil {
+				return err
 			}
+			// A cluster ending exactly on a value-taking letter ("-f") takes its
+			// value from the next token; a glued value ("-f2") does not.
+			expectValue = uniqArgTaking.has(a[len(a)-1])
+			continue
 		}
-		if err := checkShortCluster(a, tarAllowedShort, tarArgTaking, tarRejectLetter); err != nil {
-			return err
+		operands++
+		if operands > 1 {
+			return fmt.Errorf("uniq: %q names an output file, which writes to an arbitrary path and is not allowed in secure mode", a)
 		}
 	}
 	return nil

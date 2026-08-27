@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -176,6 +177,100 @@ func TestCommandExecutor_vulnerability_prevention(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestCommandExecutor_childEnvIsMinimal(t *testing.T) {
+	logger := zerolog.New(zerolog.NewTestWriter(t))
+	ctx := context.Background()
+
+	// A secret in the server's own environment must not reach the child, or an
+	// allowlisted reader (`env`, `cat /proc/self/environ`) exfiltrates it.
+	t.Setenv("MCP_SHELL_TEST_SECRET", "leaked-secret-value")
+
+	config := SecurityConfig{MaxExecutionTime: 5 * time.Second}
+	executor := newCommandExecutor(config, logger)
+
+	result, err := executor.executeSecureCommand(ctx, "env", false)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.NotContains(t, result.Stdout, "leaked-secret-value")
+	assert.NotContains(t, result.Stdout, "MCP_SHELL_TEST_SECRET")
+}
+
+func TestCommandExecutor_gitRepoConfigIsNeutralised(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	logger := zerolog.New(zerolog.NewTestWriter(t))
+	ctx := context.Background()
+
+	repo := t.TempDir()
+	sentinel := filepath.Join(t.TempDir(), "git-pwned")
+	hook := filepath.Join(repo, "evil.sh")
+	require.NoError(t, os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+sentinel+"\n"), 0o755))
+
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+	runGit("init")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o644))
+	runGit("add", "a.txt")
+	runGit("commit", "-m", "init")
+	// Every repo-local vector git reads from the filesystem instead of argv:
+	// fsmonitor (status), diff.external and per-path textconv (diff/show/log -p).
+	runGit("config", "core.fsmonitor", hook)
+	runGit("config", "diff.external", hook)
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("a.txt diff=evil\n"), 0o644))
+	runGit("config", "diff.evil.textconv", hook)
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.txt"), []byte("two\n"), 0o644))
+	runGit("add", "a.txt", ".gitattributes")
+	runGit("commit", "-m", "second")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.txt"), []byte("three\n"), 0o644))
+
+	config := SecurityConfig{WorkingDirectory: repo, MaxExecutionTime: 5 * time.Second}
+	executor := newCommandExecutor(config, logger)
+
+	// None of these read-only commands may run the repo-configured program.
+	for _, command := range []string{"git status", "git diff", "git show", "git log -p"} {
+		t.Run(command, func(t *testing.T) {
+			require.NoError(t, os.RemoveAll(sentinel))
+			_, err := executor.executeSecureCommand(ctx, command, false)
+			require.NoError(t, err)
+			assert.NoFileExists(t, sentinel, "%q must not run a repo-configured program", command)
+		})
+	}
+
+	// The hardening must not break ordinary read-only output.
+	t.Run("git log --oneline still works", func(t *testing.T) {
+		result, err := executor.executeSecureCommand(ctx, "git log --oneline", false)
+		require.NoError(t, err)
+		assert.Equal(t, "success", result.Status)
+		assert.Contains(t, result.Stdout, "second")
+	})
+}
+
+func TestCommandExecutor_outputCapStopsRunawayOutput(t *testing.T) {
+	logger := zerolog.New(zerolog.NewTestWriter(t))
+	ctx := context.Background()
+
+	config := SecurityConfig{MaxOutputSize: 1024, MaxExecutionTime: 30 * time.Second}
+	executor := newCommandExecutor(config, logger)
+
+	start := time.Now()
+	_, err := executor.executeSecureCommand(ctx, "cat /dev/zero", false)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum size limit")
+	// The overflow must stop the child promptly, not run out MaxExecutionTime
+	// while /dev/zero fills memory.
+	assert.Less(t, elapsed, 10*time.Second)
 }
 
 func TestCommandExecutor_failsClosedOnSetupErrors(t *testing.T) {

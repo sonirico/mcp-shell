@@ -43,6 +43,12 @@ func TestPolicySet_check(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:          "git cat-file --textconv blocked",
+			argv:          []string{"git", "cat-file", "--textconv", "HEAD:a.txt"},
+			expectError:   true,
+			errorContains: "not allowed",
+		},
+		{
 			name:          "find -exec blocked",
 			argv:          []string{"find", ".", "-exec", "rm", "{}", "+"},
 			expectError:   true,
@@ -96,25 +102,41 @@ func TestPolicySet_check(t *testing.T) {
 			errorContains: "arbitrary file",
 		},
 		{
-			name:        "sort plain sort allowed",
-			argv:        []string{"sort", "-n", "-r", "-k2", "f"},
+			name:          "uniq second operand arbitrary write blocked",
+			argv:          []string{"uniq", "input.txt", "/tmp/pwned"},
+			expectError:   true,
+			errorContains: "output file",
+		},
+		{
+			name:          "uniq second operand after -- blocked",
+			argv:          []string{"uniq", "--", "input.txt", "/tmp/pwned"},
+			expectError:   true,
+			errorContains: "output file",
+		},
+		{
+			name:          "uniq unknown flag blocked",
+			argv:          []string{"uniq", "-t", "input.txt"},
+			expectError:   true,
+			errorContains: "not allowed",
+		},
+		{
+			name:        "uniq single input allowed",
+			argv:        []string{"uniq", "-c", "input.txt"},
 			expectError: false,
 		},
 		{
-			name:          "tar checkpoint-action blocked",
-			argv:          []string{"tar", "-cf", "/dev/null", "x", "--checkpoint-action=exec=sh"},
-			expectError:   true,
-			errorContains: "checkpoint-action",
+			name:        "uniq -f separate value not miscounted as operand",
+			argv:        []string{"uniq", "-f", "2", "input.txt"},
+			expectError: false,
 		},
 		{
-			name:          "tar to-command blocked",
-			argv:          []string{"tar", "--to-command=sh", "-xf", "a.tar"},
-			expectError:   true,
-			errorContains: "to-command",
+			name:        "uniq --skip-fields separate value not miscounted as operand",
+			argv:        []string{"uniq", "--skip-fields", "2", "input.txt"},
+			expectError: false,
 		},
 		{
-			name:        "tar list allowed",
-			argv:        []string{"tar", "-tf", "a.tar"},
+			name:        "sort plain sort allowed",
+			argv:        []string{"sort", "-n", "-r", "-k2", "f"},
 			expectError: false,
 		},
 		{
@@ -174,23 +196,6 @@ func TestPolicySet_check(t *testing.T) {
 		{
 			name:        "sort -S buffer allowed",
 			argv:        []string{"sort", "-S", "1G", "f"},
-			expectError: false,
-		},
-		{
-			name:          "tar unknown flag blocked",
-			argv:          []string{"tar", "--frobnicate", "-xf", "a.tar"},
-			expectError:   true,
-			errorContains: "not allowed",
-		},
-		{
-			name:          "tar -I compress program blocked",
-			argv:          []string{"tar", "-I", "/bin/sh", "-xf", "a.tar"},
-			expectError:   true,
-			errorContains: "execute arbitrary",
-		},
-		{
-			name:        "tar bundled -xzf allowed",
-			argv:        []string{"tar", "-xzf", "a.tar"},
 			expectError: false,
 		},
 		{
@@ -258,52 +263,6 @@ func TestPolicySet_check(t *testing.T) {
 			argv:        []string{"sort", "-t", ":", "-k2", "f"},
 			expectError: false,
 		},
-		{
-			name:          "tar -C extraction escape blocked",
-			argv:          []string{"tar", "-x", "-f", "a.tar", "-C", "/etc"},
-			expectError:   true,
-			errorContains: "sandbox",
-		},
-		{
-			name:          "tar -p setuid restore blocked",
-			argv:          []string{"tar", "-xpf", "a.tar"},
-			expectError:   true,
-			errorContains: "setuid",
-		},
-		{
-			name:          "tar --directory long blocked",
-			argv:          []string{"tar", "-xf", "a.tar", "--directory=/etc"},
-			expectError:   true,
-			errorContains: "sandbox",
-		},
-		{
-			name:          "tar old-style bundled -C escape blocked",
-			argv:          []string{"tar", "xfC", "a.tar", "/tmp/dest"},
-			expectError:   true,
-			errorContains: "sandbox",
-		},
-		{
-			name:          "tar old-style bundled -p setuid blocked",
-			argv:          []string{"tar", "xfp", "a.tar"},
-			expectError:   true,
-			errorContains: "setuid",
-		},
-		{
-			name:          "tar old-style bundled -I exec blocked",
-			argv:          []string{"tar", "cIf", "/bin/sh", "out.tar", "x"},
-			expectError:   true,
-			errorContains: "execute arbitrary",
-		},
-		{
-			name:        "tar old-style xzf allowed",
-			argv:        []string{"tar", "xzf", "a.tar.gz"},
-			expectError: false,
-		},
-		{
-			name:        "tar old-style tvf allowed",
-			argv:        []string{"tar", "tvf", "a.tar"},
-			expectError: false,
-		},
 	}
 
 	policies := newDefaultPolicySet()
@@ -333,11 +292,14 @@ func TestPolicySet_governs(t *testing.T) {
 		assert.True(t, policies.governs("git"))
 		assert.True(t, policies.governs("/usr/bin/git"))
 		assert.True(t, policies.governs("find"))
-		assert.True(t, policies.governs("tar"))
+		assert.True(t, policies.governs("sort"))
+		assert.True(t, policies.governs("uniq"))
 	})
 
 	t.Run("ungoverned", func(t *testing.T) {
 		assert.False(t, policies.governs("ls"))
 		assert.False(t, policies.governs("/bin/bash"))
+		// tar is deliberately not classified: its useful modes all write files.
+		assert.False(t, policies.governs("tar"))
 	})
 }

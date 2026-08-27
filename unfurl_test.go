@@ -146,6 +146,13 @@ func TestCommandUnfurler_unfurl(t *testing.T) {
 			command:     `echo $'\143hmod'`,
 			wantAllowed: false,
 		},
+		{
+			// The parser silently drops NUL, so a smuggled NUL would make the
+			// executed argv differ from the audited string. Reject up front.
+			name:        "nul byte is rejected",
+			command:     "cat /etc/pass\x00wd",
+			wantAllowed: false,
+		},
 	}
 
 	unfurler := newCommandUnfurler()

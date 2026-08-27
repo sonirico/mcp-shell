@@ -24,36 +24,45 @@ func newSecurityValidator(cfg SecurityConfig, logger zerolog.Logger) *SecurityVa
 		unfurler: newCommandUnfurler(),
 		policies: newDefaultPolicySet(),
 	}
-	v.warnOnInterpreters()
+	v.warnOnUnclassified()
 	return v
 }
 
-// warnOnInterpreters flags allowlisted executables that can execute arbitrary
-// commands regardless of metacharacter checks (shell/language interpreters, and
-// git via `-c alias.x=!cmd`). Allowing one defeats secure mode; the warning
-// surfaces the misconfiguration at startup instead of silently trusting it.
-func (v *SecurityValidator) warnOnInterpreters() {
+// warnOnUnclassified flags allowlisted executables that secure mode will
+// reject anyway because they are neither data-only nor governed by an argument
+// policy (GHSA-gg85-6grh-63fp: enumerating dangerous binaries is inherently
+// incomplete, so unclassified means denied). The warning surfaces the dead
+// allowlist entry at startup instead of failing every call silently.
+func (v *SecurityValidator) warnOnUnclassified() {
 	if !v.config.Enabled || v.config.UseShellExecution {
 		return
 	}
 	for _, exe := range v.config.AllowedExecutables {
-		if isInterpreterExecutable(filepath.Base(exe)) {
+		if !v.isClassifiedExecutable(exe) {
 			v.logger.Warn().
 				Str("executable", exe).
-				Msg("allowed executable can run arbitrary commands (interpreter or alias-capable) - this defeats secure mode regardless of metacharacter filtering")
+				Msg("allowed executable is not classified as safe (no argument policy, not data-only) - secure mode will reject it")
 		}
 	}
 }
 
-// isInterpreterExecutable reports whether base names an executable that can
-// itself run arbitrary commands, making executable-allowlisting ineffective.
-func isInterpreterExecutable(base string) bool {
-	switch base {
-	case "bash", "sh", "zsh", "fish", "dash", "ksh", "csh", "tcsh",
-		"python", "python2", "python3", "perl", "ruby", "node", "php", "git":
-		return true
-	}
-	return false
+// dataOnlyExecutables names utilities that transform or report data and
+// nothing else: they cannot execute other programs and cannot write to a
+// caller-chosen path. Executables outside this set need an argPolicy to run in
+// secure mode; interpreters and command wrappers (env, timeout, nice, xargs,
+// busybox, ...) are excluded by construction rather than enumerated.
+var dataOnlyExecutables = newStringSet(
+	"ls", "pwd", "whoami", "date", "echo", "printf",
+	"cat", "grep", "wc", "head", "tail", "tr", "cut",
+	"basename", "dirname", "realpath", "readlink", "stat", "du", "df",
+	"uname", "id",
+	"md5sum", "sha1sum", "sha256sum", "sha512sum", "base64",
+)
+
+// isClassifiedExecutable reports whether secure mode knows the executable to
+// be safe: either data-only, or restricted by a per-tool argument policy.
+func (v *SecurityValidator) isClassifiedExecutable(executable string) bool {
+	return v.policies.governs(executable) || dataOnlyExecutables.has(filepath.Base(executable))
 }
 
 func (v *SecurityValidator) validateCommand(command string) error {
@@ -100,19 +109,35 @@ func (v *SecurityValidator) validateExecutableCommand(command string) error {
 
 	executable := res.Argv[0]
 
+	// A relative argv[0] with a path separator ("./ls", "sub/ls") is
+	// existence-checked against the server CWD but executed relative to the
+	// configured WorkingDirectory, so validation and execution can resolve
+	// different files. Only a bare name (PATH lookup) or an absolute path is
+	// unambiguous; reject anything in between.
+	if !filepath.IsAbs(executable) && strings.ContainsRune(executable, filepath.Separator) {
+		return fmt.Errorf("relative executable paths are not allowed in secure mode: %q", executable)
+	}
+
 	for _, allowed := range v.config.AllowedExecutables {
 		if v.matchesExecutable(executable, allowed) {
-			// An interpreter defeats the allowlist by executing whatever it is
-			// handed. Hard-deny it unless a per-tool policy governs its arguments.
-			if isInterpreterExecutable(filepath.Base(executable)) && !v.policies.governs(executable) {
-				return fmt.Errorf("executable '%s' is an interpreter and cannot be allowed in secure mode", executable)
+			// Deny-by-default classification: enumerating binaries that can run
+			// arbitrary commands (interpreters, wrappers like env/timeout/nice)
+			// is inherently incomplete, so anything not affirmatively known safe
+			// is rejected even when allowlisted (GHSA-gg85-6grh-63fp).
+			if !v.isClassifiedExecutable(executable) {
+				return fmt.Errorf(
+					"executable '%s' is not classified as safe in secure mode: it is not a data-only utility and has no argument policy",
+					executable,
+				)
 			}
 			if err := v.policies.check(res.Argv); err != nil {
 				return err
 			}
-			// Apply blocked_patterns and blocked_commands to restrict specific
-			// arguments (e.g. block "git remote -v" while allowing git).
-			if err := v.checkBlockedPatternsAndCommands(command); err != nil {
+			// Apply blocked_patterns and blocked_commands to the resolved argv,
+			// not the raw command: matching the source string lets split quotes
+			// ("cat /etc/pass\"wd\"") produce the target argv while evading the
+			// filter. The normalised argv is what actually runs.
+			if err := v.checkBlockedPatternsAndCommands(strings.Join(res.Argv, " ")); err != nil {
 				return err
 			}
 			v.logger.Debug().

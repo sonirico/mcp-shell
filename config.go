@@ -44,9 +44,9 @@ type LoggingConfig struct {
 // newDefaultSecurityConfig returns the built-in secure defaults applied when no
 // MCP_SHELL_SEC_CONFIG_FILE is provided. Secure mode is the operating default:
 // the server boots restricted to a narrow allowlist of utilities that cannot
-// themselves spawn arbitrary processes. Shell/language interpreters (bash, sh,
-// python, perl, ruby, git) are intentionally excluded - allowing one is
-// equivalent to disabling the allowlist entirely.
+// themselves spawn arbitrary processes. Every entry is classified as safe
+// (data-only, or governed by an argument policy); unclassified executables
+// would be rejected by secure mode anyway, so none ship here.
 func newDefaultSecurityConfig() SecurityConfig {
 	return SecurityConfig{
 		Enabled:           true,
@@ -91,6 +91,13 @@ func loadConfig() (*Config, error) {
 		}
 	}
 
+	// Disabling security must be an affirmative choice, never a side effect of a
+	// config file. Whether it comes from the env opt-out or an explicit
+	// `enabled: false`, it is only honoured alongside MCP_SHELL_ALLOW_UNSAFE.
+	if !config.Security.Enabled && !getBoolEnv("MCP_SHELL_ALLOW_UNSAFE", false) {
+		return nil, fmt.Errorf("security is disabled but MCP_SHELL_ALLOW_UNSAFE is not set; refusing to start unrestricted")
+	}
+
 	if err := validateConfig(config); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
@@ -119,6 +126,22 @@ func loadSecurityFromFile(config *Config, filename string) error {
 			UseShellExecution  bool     `yaml:"use_shell_execution"`
 		} `yaml:"security"`
 	}
+
+	// Seed the decode target with the current secure defaults so keys the file
+	// omits keep those defaults instead of decoding to zero values. Otherwise a
+	// file that only narrows the allowlist would silently set enabled=false,
+	// max_output_size=0 (unlimited) and working_directory="" - failing open.
+	sec := config.Security
+	yamlConfig.Security.Enabled = sec.Enabled
+	yamlConfig.Security.AllowedCommands = sec.AllowedCommands
+	yamlConfig.Security.BlockedCommands = sec.BlockedCommands
+	yamlConfig.Security.BlockedPatterns = sec.BlockedPatterns
+	yamlConfig.Security.AllowedExecutables = sec.AllowedExecutables
+	yamlConfig.Security.WorkingDirectory = sec.WorkingDirectory
+	yamlConfig.Security.RunAsUser = sec.RunAsUser
+	yamlConfig.Security.MaxOutputSize = sec.MaxOutputSize
+	yamlConfig.Security.AuditLog = sec.AuditLog
+	yamlConfig.Security.UseShellExecution = sec.UseShellExecution
 
 	if err := yaml.Unmarshal(data, &yamlConfig); err != nil {
 		return err

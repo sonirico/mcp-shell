@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,10 +25,12 @@ func TestLoadConfig_defaults(t *testing.T) {
 	assert.True(t, config.Security.Enabled)
 	assert.False(t, config.Security.UseShellExecution)
 	assert.NotEmpty(t, config.Security.AllowedExecutables)
-	// No shell/language interpreter ships in the default allowlist.
+	// Every default allowlist entry is classified as safe, so the built-in
+	// config never ships an executable that secure mode would then reject.
+	validator := newSecurityValidator(config.Security, zerolog.Nop())
 	for _, exe := range config.Security.AllowedExecutables {
-		assert.False(t, isInterpreterExecutable(exe),
-			"default allowlist must not contain interpreter %q", exe)
+		assert.True(t, validator.isClassifiedExecutable(exe),
+			"default allowlist entry %q must be data-only or policy-governed", exe)
 	}
 	assert.Equal(t, "mcp-shell 🐚", config.Server.Name)
 	assert.Equal(t, "info", config.Logging.Level)
@@ -169,6 +172,55 @@ security:
 			}
 		})
 	}
+}
+
+func TestLoadSecurityFromFile_failsClosed(t *testing.T) {
+	writeConfig := func(t *testing.T, yamlContent string) {
+		tmpDir := t.TempDir()
+		configFile := filepath.Join(tmpDir, "security.yaml")
+		require.NoError(t, os.WriteFile(configFile, []byte(yamlContent), 0o644))
+		t.Setenv("MCP_SHELL_SEC_CONFIG_FILE", configFile)
+		t.Setenv("MCP_SHELL_ALLOW_UNSAFE", "")
+	}
+
+	t.Run("omitted enabled keeps secure defaults", func(t *testing.T) {
+		// A file that only narrows the allowlist must not silently disable
+		// security: absent keys keep their secure defaults, not zero values.
+		writeConfig(t, `
+security:
+  allowed_executables:
+    - "ls"
+`)
+		config, err := loadConfig()
+		require.NoError(t, err)
+
+		assert.True(t, config.Security.Enabled)
+		assert.Equal(t, "/tmp", config.Security.WorkingDirectory)
+		assert.Equal(t, 1048576, config.Security.MaxOutputSize)
+	})
+
+	t.Run("explicit enabled false without opt-in refuses to start", func(t *testing.T) {
+		writeConfig(t, `
+security:
+  enabled: false
+  allowed_executables:
+    - "ls"
+`)
+		_, err := loadConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "MCP_SHELL_ALLOW_UNSAFE")
+	})
+
+	t.Run("explicit enabled false with opt-in is allowed", func(t *testing.T) {
+		writeConfig(t, `
+security:
+  enabled: false
+`)
+		t.Setenv("MCP_SHELL_ALLOW_UNSAFE", "true")
+		config, err := loadConfig()
+		require.NoError(t, err)
+		assert.False(t, config.Security.Enabled)
+	})
 }
 
 func TestValidateConfig(t *testing.T) {
