@@ -61,6 +61,20 @@ func TestSecurityValidator_validateCommand(t *testing.T) {
 			errorContains: "no allowed executables configured",
 		},
 		{
+			// blocked_commands is matched against the resolved argv, so a split
+			// quote that rebuilds the same argv cannot evade it.
+			name: "secure mode blocked_commands - split-quote evasion is caught on argv",
+			config: SecurityConfig{
+				Enabled:            true,
+				UseShellExecution:  false,
+				AllowedExecutables: []string{"cat"},
+				BlockedCommands:    []string{"/etc/passwd"},
+			},
+			command:       `cat /etc/pass"wd"`,
+			expectError:   true,
+			errorContains: "blocked keyword",
+		},
+		{
 			name: "legacy mode with allowed commands - allows echo",
 			config: SecurityConfig{
 				Enabled:           true,
@@ -130,16 +144,30 @@ func TestSecurityValidator_validateCommand(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "secure mode with blocked_commands - blocks rm in allowed ls",
+			name: "secure mode with blocked_commands - blocks flagged args of allowed ls",
+			config: SecurityConfig{
+				Enabled:            true,
+				UseShellExecution:  false,
+				AllowedExecutables: []string{"ls"},
+				BlockedCommands:    []string{"-la"},
+			},
+			command:       "ls -la /tmp",
+			expectError:   true,
+			errorContains: "blocked keyword",
+		},
+		// GHSA-gg85-6grh-63fp follow-through: an allowlisted executable that is
+		// neither data-only nor policy-governed (rm) is rejected at
+		// classification, before blocked_commands even applies.
+		{
+			name: "secure mode rejects unclassified rm despite allowlist entry",
 			config: SecurityConfig{
 				Enabled:            true,
 				UseShellExecution:  false,
 				AllowedExecutables: []string{"ls", "rm"},
-				BlockedCommands:    []string{"rm -rf"},
 			},
 			command:       "rm -rf /tmp",
 			expectError:   true,
-			errorContains: "blocked keyword",
+			errorContains: "not classified as safe",
 		},
 		// GHSA-74hp-mggr-hv58: git shell-alias bypass via `-c alias.x=!cmd`.
 		// Now caught by the per-tool git argument policy, not metacharacters.
@@ -229,12 +257,82 @@ func TestSecurityValidator_validateExecutableCommand(t *testing.T) {
 			expectError:        true,
 			errorContains:      "empty command",
 		},
+		// GHSA-gg85-6grh-63fp: command-wrapper utilities (env, timeout, nice, ...)
+		// run an arbitrary command taken from a literal argument. Allowlisting one
+		// must not grant it execution: only executables classified as data-only or
+		// governed by an argument policy are accepted.
+		{
+			name:               "wrapper env is rejected even when allowlisted",
+			allowedExecutables: []string{"env", "cat"},
+			command:            "env touch /tmp/pwned",
+			expectError:        true,
+			errorContains:      "not classified as safe",
+		},
+		{
+			name:               "wrapper timeout is rejected even when allowlisted",
+			allowedExecutables: []string{"timeout"},
+			command:            "timeout 5 touch /tmp/pwned",
+			expectError:        true,
+			errorContains:      "not classified as safe",
+		},
+		{
+			name:               "wrapper nice is rejected even when allowlisted",
+			allowedExecutables: []string{"nice"},
+			command:            "nice touch /tmp/pwned",
+			expectError:        true,
+			errorContains:      "not classified as safe",
+		},
+		{
+			name:               "unclassified allowlisted executable is rejected",
+			allowedExecutables: []string{"rsync"},
+			command:            "rsync a b",
+			expectError:        true,
+			errorContains:      "not classified as safe",
+		},
+		{
+			// tar is no longer classified: -f names an arbitrary write path in any
+			// create/extract mode, so allowlisting it must not grant execution.
+			name:               "tar is rejected as unclassified",
+			allowedExecutables: []string{"tar"},
+			command:            "tar -cf /home/user/.bashrc x",
+			expectError:        true,
+			errorContains:      "not classified as safe",
+		},
+		{
+			name:               "data-only executable in allowlist still passes",
+			allowedExecutables: []string{"cat"},
+			command:            "cat /etc/hostname",
+			expectError:        false,
+		},
+		{
+			name:               "policy-governed executable in allowlist still passes",
+			allowedExecutables: []string{"git"},
+			command:            "git status",
+			expectError:        false,
+		},
 		{
 			name:               "whitespace only command",
 			allowedExecutables: []string{"ls"},
 			command:            "   ",
 			expectError:        true,
 			errorContains:      "empty command",
+		},
+		// A relative argv[0] with a separator is existence-checked against the
+		// server CWD but executed relative to WorkingDirectory, so validation and
+		// execution can resolve different files. Reject it outright.
+		{
+			name:               "relative executable with leading dot is rejected",
+			allowedExecutables: []string{"ls"},
+			command:            "./ls -la",
+			expectError:        true,
+			errorContains:      "relative executable",
+		},
+		{
+			name:               "relative executable in subdir is rejected",
+			allowedExecutables: []string{"ls"},
+			command:            "sub/dir/ls",
+			expectError:        true,
+			errorContains:      "relative executable",
 		},
 	}
 
