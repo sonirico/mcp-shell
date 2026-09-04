@@ -837,6 +837,35 @@ func TestFSTools_writes(t *testing.T) {
 		}
 	})
 
+	t.Run("missing required params are rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, true)
+
+		tests := []struct {
+			name string
+			args map[string]any
+		}{
+			{"write_file", map[string]any{"content": "x"}},
+			{"write_file", map[string]any{"path": "a.txt"}},
+			{"edit_file", map[string]any{"old_string": "a", "new_string": "b"}},
+			{"edit_file", map[string]any{"path": "a.txt", "new_string": "b"}},
+			{"edit_file", map[string]any{"path": "a.txt", "old_string": "a"}},
+			{"mkdir", map[string]any{}},
+			{"move", map[string]any{"to": "y"}},
+			{"move", map[string]any{"from": "a.txt"}},
+			{"delete", map[string]any{}},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				res := callTool(t, s, tc.name, tc.args)
+
+				require.True(t, res.IsError)
+			})
+		}
+	})
+
 	t.Run("write tools are not registered when writes disabled", func(t *testing.T) {
 		t.Parallel()
 		s, _ := newTestFSServer(t, false)

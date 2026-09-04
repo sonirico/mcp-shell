@@ -717,6 +717,133 @@ func TestGitTools_writes(t *testing.T) {
 		require.True(t, res.IsError)
 	})
 
+	t.Run("git_add all stages every change", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "c.txt"), []byte("c\n"), 0o644))
+
+		res := callTool(t, s, "git_add", map[string]any{"all": true})
+		require.False(t, res.IsError)
+
+		assert.Equal(t, "A", gitOutput(t, ws, "status", "--porcelain=v1", "c.txt")[:1])
+	})
+
+	t.Run("git_add path resembling a flag is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_add", map[string]any{"paths": []any{"-x"}})
+
+		requireErrorText(t, res, "resembles a flag")
+	})
+
+	t.Run("git_commit without message errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_commit", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("git_commit all commits unstaged changes", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("modified\n"), 0o644))
+
+		res := callTool(t, s, "git_commit", map[string]any{"message": "third", "all": true})
+		require.False(t, res.IsError)
+
+		assert.Equal(t, "3", gitOutput(t, ws, "rev-list", "--count", "HEAD"))
+	})
+
+	t.Run("git_switch without branch errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_switch", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("git_switch without create switches to an existing branch", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "unused"), []byte("x"), 0o644))
+		cmd := exec.Command("git", "branch", "feat")
+		cmd.Dir = ws.root
+		require.NoError(t, cmd.Run())
+
+		res := callTool(t, s, "git_switch", map[string]any{"branch": "feat"})
+		require.False(t, res.IsError)
+
+		assert.Equal(t, "feat", gitOutput(t, ws, "branch", "--show-current"))
+	})
+
+	t.Run("git_restore without paths errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_restore", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("git_restore staged unstages a change", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("modified\n"), 0o644))
+		cmd := exec.Command("git", "add", "a.txt")
+		cmd.Dir = ws.root
+		require.NoError(t, cmd.Run())
+
+		res := callTool(t, s, "git_restore", map[string]any{"paths": []any{"a.txt"}, "staged": true})
+		require.False(t, res.IsError)
+
+		assert.Equal(t, "M ", gitOutput(t, ws, "status", "--porcelain=v1", "a.txt")[:2])
+	})
+
+	t.Run("git_restore path resembling a flag is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_restore", map[string]any{"paths": []any{"-x"}})
+
+		requireErrorText(t, res, "resembles a flag")
+	})
+
+	t.Run("git_stash without action errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_stash", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("git_stash push with message labels the stash", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("modified\n"), 0o644))
+
+		res := callTool(t, s, "git_stash", map[string]any{"action": "push", "message": "wip"})
+		require.False(t, res.IsError)
+
+		assert.Contains(t, gitOutput(t, ws, "stash", "list"), "wip")
+	})
+
+	t.Run("git_stash drop removes the stash", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("modified\n"), 0o644))
+		callTool(t, s, "git_stash", map[string]any{"action": "push"})
+
+		res := callTool(t, s, "git_stash", map[string]any{"action": "drop"})
+		require.False(t, res.IsError)
+
+		assert.Empty(t, gitOutput(t, ws, "stash", "list"))
+	})
+
 	t.Run("write tools are not registered when writes disabled", func(t *testing.T) {
 		t.Parallel()
 		s, _ := newTestGitServer(t, false)
