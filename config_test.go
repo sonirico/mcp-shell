@@ -129,6 +129,29 @@ security:
 			},
 		},
 		{
+			name: "writes_enabled true is loaded",
+			yamlContent: `
+security:
+  enabled: true
+  writes_enabled: true
+`,
+			expectError: false,
+			validateConfig: func(t *testing.T, config *Config) {
+				assert.True(t, config.Security.WritesEnabled)
+			},
+		},
+		{
+			name: "writes_enabled omitted stays false",
+			yamlContent: `
+security:
+  enabled: true
+`,
+			expectError: false,
+			validateConfig: func(t *testing.T, config *Config) {
+				assert.False(t, config.Security.WritesEnabled)
+			},
+		},
+		{
 			name: "invalid max_execution_time",
 			yamlContent: `
 security:

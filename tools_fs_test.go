@@ -49,7 +49,7 @@ func resultText(t *testing.T, res *mcp.CallToolResult) string {
 	return textContent.Text
 }
 
-func newTestFSServer(t *testing.T) (*server.MCPServer, *workspace) {
+func newTestFSServer(t *testing.T, writesEnabled bool) (*server.MCPServer, *workspace) {
 	t.Helper()
 
 	ws := newTestWorkspace(t)
@@ -61,7 +61,7 @@ func newTestFSServer(t *testing.T) (*server.MCPServer, *workspace) {
 	require.NoError(t, os.WriteFile(filepath.Join(ws.root, "bin.dat"), []byte{0x00, 0x01, 0x02}, 0o644))
 
 	s := server.NewMCPServer("t", "0")
-	newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+	newFSTools(ws, 0, writesEnabled, zerolog.Nop()).register(s)
 
 	return s, ws
 }
@@ -71,7 +71,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("read_file full", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "read_file", map[string]any{"path": "a.txt"})
 
@@ -81,7 +81,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("read_file offset and limit", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "read_file", map[string]any{"path": "a.txt", "offset": 2, "limit": 1})
 
@@ -91,7 +91,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("read_file tail", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "read_file", map[string]any{"path": "a.txt", "tail": 1})
 
@@ -101,7 +101,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("read_file binary is rejected", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "read_file", map[string]any{"path": "bin.dat"})
 
@@ -110,7 +110,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("list_dir depth 1", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "list_dir", map[string]any{"depth": 1})
 
@@ -121,7 +121,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("list_dir depth 2", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "list_dir", map[string]any{"depth": 2})
 
@@ -131,7 +131,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("list_dir include_hidden", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "list_dir", map[string]any{"depth": 1, "include_hidden": true})
 
@@ -141,7 +141,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("glob", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "glob", map[string]any{"pattern": "**/*.go"})
 
@@ -151,7 +151,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("grep matches", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "grep", map[string]any{"pattern": "l2"})
 
@@ -161,7 +161,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("grep ignore_case", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "grep", map[string]any{"pattern": "L2", "ignore_case": true})
 
@@ -171,7 +171,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("grep files_only", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "grep", map[string]any{"pattern": "l2", "files_only": true})
 
@@ -181,7 +181,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("grep count", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "grep", map[string]any{"pattern": "l2", "count": true})
 
@@ -191,7 +191,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("grep context", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "grep", map[string]any{"pattern": "l2", "context": 1})
 
@@ -202,7 +202,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("stat file", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "stat", map[string]any{"path": "a.txt"})
 
@@ -212,7 +212,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("diff_files", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "diff_files", map[string]any{"path_a": "a.txt", "path_b": "sub/b.go"})
 
@@ -223,7 +223,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("system_info", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "system_info", map[string]any{})
 
@@ -233,7 +233,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("path escape is rejected", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		tests := []struct {
 			name string
@@ -278,7 +278,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("registration", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		tools := s.ListTools()
 
@@ -291,7 +291,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("required argument missing", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		tests := []struct {
 			label string
@@ -318,7 +318,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("read_file offset and limit clamp out of range", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		tests := []struct {
 			label string
@@ -343,7 +343,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("read_file nonexistent path errors", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "read_file", map[string]any{"path": "missing.txt"})
 
@@ -352,7 +352,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("list_dir nonexistent path errors", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "list_dir", map[string]any{"path": "missing"})
 
@@ -499,7 +499,7 @@ func TestFSTools(t *testing.T) {
 
 		t.Run("invalid regex errors", func(t *testing.T) {
 			t.Parallel()
-			s, _ := newTestFSServer(t)
+			s, _ := newTestFSServer(t, false)
 			res := callTool(t, s, "grep", map[string]any{"pattern": "("})
 
 			assert.True(t, res.IsError)
@@ -507,7 +507,7 @@ func TestFSTools(t *testing.T) {
 
 		t.Run("nonexistent path errors", func(t *testing.T) {
 			t.Parallel()
-			s, _ := newTestFSServer(t)
+			s, _ := newTestFSServer(t, false)
 			res := callTool(t, s, "grep", map[string]any{"pattern": "x", "path": "missing"})
 
 			assert.True(t, res.IsError)
@@ -534,7 +534,7 @@ func TestFSTools(t *testing.T) {
 
 		t.Run("invalid glob filter errors", func(t *testing.T) {
 			t.Parallel()
-			s, _ := newTestFSServer(t)
+			s, _ := newTestFSServer(t, false)
 			res := callTool(t, s, "grep", map[string]any{"pattern": "x", "glob": "["})
 
 			assert.True(t, res.IsError)
@@ -597,7 +597,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("stat nonexistent path errors", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "stat", map[string]any{"path": "missing.txt"})
 
@@ -606,7 +606,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("stat directory", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "stat", map[string]any{"path": "sub"})
 
@@ -635,7 +635,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("diff_files path_b escape is rejected", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		res := callTool(t, s, "diff_files", map[string]any{"path_a": "a.txt", "path_b": "../x"})
 
@@ -644,7 +644,7 @@ func TestFSTools(t *testing.T) {
 
 	t.Run("diff_files nonexistent paths error", func(t *testing.T) {
 		t.Parallel()
-		s, _ := newTestFSServer(t)
+		s, _ := newTestFSServer(t, false)
 
 		tests := []struct {
 			label string
@@ -676,6 +676,176 @@ func TestFSTools(t *testing.T) {
 
 		text := resultText(t, res)
 		assert.Contains(t, text, "git_root: "+ws.root)
+	})
+}
+
+func TestFSTools_writes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("write_file creates nested file", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestFSServer(t, true)
+
+		res := callTool(t, s, "write_file", map[string]any{"path": "n/e/w.txt", "content": "hello"})
+
+		text := resultText(t, res)
+		assert.Equal(t, "wrote 5 bytes to n/e/w.txt", text)
+		data, err := os.ReadFile(filepath.Join(ws.root, "n", "e", "w.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "hello", string(data))
+	})
+
+	t.Run("write_file append appends", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestFSServer(t, true)
+
+		callTool(t, s, "write_file", map[string]any{"path": "app.txt", "content": "a"})
+		callTool(t, s, "write_file", map[string]any{"path": "app.txt", "content": "b", "append": true})
+
+		data, err := os.ReadFile(filepath.Join(ws.root, "app.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "ab", string(data))
+	})
+
+	t.Run("edit_file replaces unique string", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestFSServer(t, true)
+
+		res := callTool(t, s, "edit_file", map[string]any{"path": "a.txt", "old_string": "l2", "new_string": "L2"})
+
+		text := resultText(t, res)
+		assert.Equal(t, "replaced 1 occurrence(s) in a.txt", text)
+		data, err := os.ReadFile(filepath.Join(ws.root, "a.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "l1\nL2\nl3\n", string(data))
+	})
+
+	t.Run("edit_file not found errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, true)
+
+		res := callTool(t, s, "edit_file", map[string]any{"path": "a.txt", "old_string": "missing", "new_string": "x"})
+
+		requireErrorText(t, res, "not found")
+	})
+
+	t.Run("edit_file non-unique without replace_all errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, true)
+
+		res := callTool(t, s, "edit_file", map[string]any{"path": "a.txt", "old_string": "l", "new_string": "x"})
+
+		requireErrorText(t, res, "not unique")
+	})
+
+	t.Run("edit_file replace_all replaces both", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestFSServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "dup.txt"), []byte("foo bar foo\n"), 0o644))
+
+		res := callTool(t, s, "edit_file", map[string]any{"path": "dup.txt", "old_string": "foo", "new_string": "baz", "replace_all": true})
+
+		text := resultText(t, res)
+		assert.Equal(t, "replaced 2 occurrence(s) in dup.txt", text)
+		data, err := os.ReadFile(filepath.Join(ws.root, "dup.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "baz bar baz\n", string(data))
+	})
+
+	t.Run("mkdir creates dir", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestFSServer(t, true)
+
+		res := callTool(t, s, "mkdir", map[string]any{"path": "newdir"})
+
+		text := resultText(t, res)
+		assert.Equal(t, "created newdir", text)
+		info, err := os.Stat(filepath.Join(ws.root, "newdir"))
+		require.NoError(t, err)
+		assert.True(t, info.IsDir())
+	})
+
+	t.Run("move renames", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestFSServer(t, true)
+
+		res := callTool(t, s, "move", map[string]any{"from": "a.txt", "to": "moved.txt"})
+
+		text := resultText(t, res)
+		assert.Equal(t, "moved a.txt to moved.txt", text)
+		_, err := os.Stat(filepath.Join(ws.root, "a.txt"))
+		assert.True(t, os.IsNotExist(err))
+		_, err = os.Stat(filepath.Join(ws.root, "moved.txt"))
+		require.NoError(t, err)
+	})
+
+	t.Run("delete removes file", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestFSServer(t, true)
+
+		res := callTool(t, s, "delete", map[string]any{"path": "a.txt"})
+
+		text := resultText(t, res)
+		assert.Equal(t, "deleted a.txt", text)
+		_, err := os.Stat(filepath.Join(ws.root, "a.txt"))
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("delete recursive removes dir", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestFSServer(t, true)
+
+		res := callTool(t, s, "delete", map[string]any{"path": "sub", "recursive": true})
+
+		text := resultText(t, res)
+		assert.Equal(t, "deleted sub", text)
+		_, err := os.Stat(filepath.Join(ws.root, "sub"))
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("delete workspace root is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, true)
+
+		res := callTool(t, s, "delete", map[string]any{"path": "."})
+
+		requireErrorText(t, res, "workspace root")
+	})
+
+	t.Run("path escape is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, true)
+
+		tests := []struct {
+			name string
+			args map[string]any
+		}{
+			{"write_file", map[string]any{"path": "../x", "content": "x"}},
+			{"edit_file", map[string]any{"path": "../x", "old_string": "a", "new_string": "b"}},
+			{"mkdir", map[string]any{"path": "../x"}},
+			{"move", map[string]any{"from": "../x", "to": "y"}},
+			{"delete", map[string]any{"path": "../x"}},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				res := callTool(t, s, tc.name, tc.args)
+
+				requireErrorText(t, res, "escapes")
+			})
+		}
+	})
+
+	t.Run("write tools are not registered when writes disabled", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, false)
+
+		tools := s.ListTools()
+
+		for _, name := range []string{"write_file", "edit_file", "mkdir", "move", "delete"} {
+			assert.NotContains(t, tools, name)
+		}
 	})
 }
 

@@ -28,6 +28,7 @@ type SecurityConfig struct {
 	MaxOutputSize      int           `yaml:"max_output_size"`
 	AuditLog           bool          `yaml:"audit_log"`
 	UseShellExecution  bool          `yaml:"use_shell_execution"` // Legacy mode - enables shell execution (DANGEROUS)
+	WritesEnabled      bool          `yaml:"writes_enabled"`
 }
 
 type ServerConfig struct {
@@ -124,6 +125,7 @@ func loadSecurityFromFile(config *Config, filename string) error {
 			MaxOutputSize      int      `yaml:"max_output_size"`
 			AuditLog           bool     `yaml:"audit_log"`
 			UseShellExecution  bool     `yaml:"use_shell_execution"`
+			WritesEnabled      bool     `yaml:"writes_enabled"`
 		} `yaml:"security"`
 	}
 
@@ -142,6 +144,7 @@ func loadSecurityFromFile(config *Config, filename string) error {
 	yamlConfig.Security.MaxOutputSize = sec.MaxOutputSize
 	yamlConfig.Security.AuditLog = sec.AuditLog
 	yamlConfig.Security.UseShellExecution = sec.UseShellExecution
+	yamlConfig.Security.WritesEnabled = sec.WritesEnabled
 
 	if err := yaml.Unmarshal(data, &yamlConfig); err != nil {
 		return err
@@ -157,6 +160,7 @@ func loadSecurityFromFile(config *Config, filename string) error {
 	config.Security.MaxOutputSize = yamlConfig.Security.MaxOutputSize
 	config.Security.AuditLog = yamlConfig.Security.AuditLog
 	config.Security.UseShellExecution = yamlConfig.Security.UseShellExecution
+	config.Security.WritesEnabled = yamlConfig.Security.WritesEnabled
 
 	if yamlConfig.Security.MaxExecutionTime != "" {
 		duration, err := time.ParseDuration(yamlConfig.Security.MaxExecutionTime)

@@ -49,3 +49,8 @@ security:
   
   # Logging
   audit_log: true
+
+  # Expose file and git write tools (write_file, edit_file, mkdir, move,
+  # delete, git_add, git_commit, git_switch, git_restore, git_stash). Off by
+  # default.
+  writes_enabled: false

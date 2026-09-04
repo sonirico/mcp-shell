@@ -117,6 +117,62 @@ func (t *fsTools) register(s *server.MCPServer) {
 		),
 		t.systemInfo,
 	)
+
+	if !t.writesEnabled {
+		return
+	}
+
+	s.AddTool(
+		mcp.NewTool(
+			"write_file",
+			mcp.WithDescription("Write content to a file, creating parent directories as needed"),
+			mcp.WithString("path", mcp.Required(), mcp.Description("Path relative to the workspace root")),
+			mcp.WithString("content", mcp.Required(), mcp.Description("Content to write")),
+			mcp.WithBoolean("append", mcp.DefaultBool(false), mcp.Description("Append to the file instead of overwriting it")),
+		),
+		t.writeFile,
+	)
+
+	s.AddTool(
+		mcp.NewTool(
+			"edit_file",
+			mcp.WithDescription("Replace an exact string in a file"),
+			mcp.WithString("path", mcp.Required(), mcp.Description("Path relative to the workspace root")),
+			mcp.WithString("old_string", mcp.Required(), mcp.Description("Exact string to replace")),
+			mcp.WithString("new_string", mcp.Required(), mcp.Description("Replacement string")),
+			mcp.WithBoolean("replace_all", mcp.DefaultBool(false), mcp.Description("Replace all occurrences instead of requiring a unique match")),
+		),
+		t.editFile,
+	)
+
+	s.AddTool(
+		mcp.NewTool(
+			"mkdir",
+			mcp.WithDescription("Create a directory, including parent directories"),
+			mcp.WithString("path", mcp.Required(), mcp.Description("Path relative to the workspace root")),
+		),
+		t.mkdir,
+	)
+
+	s.AddTool(
+		mcp.NewTool(
+			"move",
+			mcp.WithDescription("Move or rename a file or directory"),
+			mcp.WithString("from", mcp.Required(), mcp.Description("Source path relative to the workspace root")),
+			mcp.WithString("to", mcp.Required(), mcp.Description("Destination path relative to the workspace root")),
+		),
+		t.move,
+	)
+
+	s.AddTool(
+		mcp.NewTool(
+			"delete",
+			mcp.WithDescription("Delete a file or directory"),
+			mcp.WithString("path", mcp.Required(), mcp.Description("Path relative to the workspace root")),
+			mcp.WithBoolean("recursive", mcp.DefaultBool(false), mcp.Description("Delete directories and their contents recursively")),
+		),
+		t.deletePath,
+	)
 }
 
 func (t *fsTools) output(text string) *mcp.CallToolResult {
@@ -555,6 +611,193 @@ func (t *fsTools) systemInfo(ctx context.Context, req mcp.CallToolRequest) (*mcp
 		time.Now().Format(time.RFC3339), gitRoot,
 	)
 	return t.output(out), nil
+}
+
+func (t *fsTools) writeFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	path, err := req.RequireString("path")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	content, err := req.RequireString("content")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	appendMode := req.GetBool("append", false)
+
+	abs, err := t.ws.resolve(path)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	rel, err := filepath.Rel(t.ws.root, abs)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	if appendMode {
+		f, err := os.OpenFile(abs, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if _, err := f.WriteString(content); err != nil {
+			_ = f.Close()
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if err := f.Close(); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	} else {
+		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("wrote %d bytes to %s", len(content), rel)), nil
+}
+
+func (t *fsTools) editFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	path, err := req.RequireString("path")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	oldString, err := req.RequireString("old_string")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	newString, err := req.RequireString("new_string")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	replaceAll := req.GetBool("replace_all", false)
+
+	abs, err := t.ws.resolve(path)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	rel, err := filepath.Rel(t.ws.root, abs)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	content := string(data)
+
+	n := strings.Count(content, oldString)
+	if n == 0 {
+		return mcp.NewToolResultError("old_string not found"), nil
+	}
+	if n > 1 && !replaceAll {
+		return mcp.NewToolResultError(fmt.Sprintf("old_string is not unique (%d matches)", n)), nil
+	}
+
+	replaced := n
+	replaceCount := -1
+	if !replaceAll {
+		replaceCount = 1
+		replaced = 1
+	}
+	updated := strings.Replace(content, oldString, newString, replaceCount)
+
+	if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("replaced %d occurrence(s) in %s", replaced, rel)), nil
+}
+
+func (t *fsTools) mkdir(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	path, err := req.RequireString("path")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	abs, err := t.ws.resolve(path)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	rel, err := filepath.Rel(t.ws.root, abs)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return mcp.NewToolResultText("created " + rel), nil
+}
+
+func (t *fsTools) move(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	from, err := req.RequireString("from")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	to, err := req.RequireString("to")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	absFrom, err := t.ws.resolve(from)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	absTo, err := t.ws.resolve(to)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	relFrom, err := filepath.Rel(t.ws.root, absFrom)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	relTo, err := filepath.Rel(t.ws.root, absTo)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	if err := os.Rename(absFrom, absTo); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("moved %s to %s", relFrom, relTo)), nil
+}
+
+func (t *fsTools) deletePath(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	path, err := req.RequireString("path")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	recursive := req.GetBool("recursive", false)
+
+	abs, err := t.ws.resolve(path)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	rel, err := filepath.Rel(t.ws.root, abs)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	if abs == t.ws.root {
+		return mcp.NewToolResultError("refusing to delete the workspace root"), nil
+	}
+
+	if recursive {
+		if err := os.RemoveAll(abs); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	} else {
+		if err := os.Remove(abs); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	}
+
+	return mcp.NewToolResultText("deleted " + rel), nil
 }
 
 func isBinary(data []byte) bool {

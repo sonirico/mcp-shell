@@ -143,6 +143,60 @@ func (t *gitTools) register(s *server.MCPServer) {
 		),
 		t.gitRemotes,
 	)
+
+	if !t.writesEnabled {
+		return
+	}
+
+	s.AddTool(
+		mcp.NewTool(
+			"git_add",
+			mcp.WithDescription("Stage files"),
+			mcp.WithArray("paths", mcp.WithStringItems(), mcp.Description("Paths to stage, relative to the workspace root")),
+			mcp.WithBoolean("all", mcp.DefaultBool(false), mcp.Description("Stage all changes")),
+		),
+		t.gitAdd,
+	)
+
+	s.AddTool(
+		mcp.NewTool(
+			"git_commit",
+			mcp.WithDescription("Create a commit"),
+			mcp.WithString("message", mcp.Required(), mcp.Description("Commit message")),
+			mcp.WithBoolean("all", mcp.DefaultBool(false), mcp.Description("Stage all modified and deleted tracked files before committing")),
+		),
+		t.gitCommit,
+	)
+
+	s.AddTool(
+		mcp.NewTool(
+			"git_switch",
+			mcp.WithDescription("Switch to a branch"),
+			mcp.WithString("branch", mcp.Required(), mcp.Description("Branch to switch to")),
+			mcp.WithBoolean("create", mcp.DefaultBool(false), mcp.Description("Create the branch before switching to it")),
+		),
+		t.gitSwitch,
+	)
+
+	s.AddTool(
+		mcp.NewTool(
+			"git_restore",
+			mcp.WithDescription("Restore working tree or staged files"),
+			mcp.WithArray("paths", mcp.Required(), mcp.WithStringItems(), mcp.Description("Paths to restore, relative to the workspace root")),
+			mcp.WithBoolean("staged", mcp.DefaultBool(false), mcp.Description("Restore the index instead of the working tree")),
+		),
+		t.gitRestore,
+	)
+
+	s.AddTool(
+		mcp.NewTool(
+			"git_stash",
+			mcp.WithDescription("Stash, pop, or drop local changes"),
+			mcp.WithString("action", mcp.Required(), mcp.Description("One of push, pop, drop")),
+			mcp.WithString("message", mcp.DefaultString(""), mcp.Description("Message for a stash push")),
+		),
+		t.gitStash,
+	)
 }
 
 func validateRef(ref string) error {
@@ -429,4 +483,116 @@ func (t *gitTools) gitStashList(ctx context.Context, req mcp.CallToolRequest) (*
 func (t *gitTools) gitRemotes(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	argv := []string{"git", "remote", "-v"}
 	return t.run(ctx, "git_remotes", argv)
+}
+
+func (t *gitTools) gitAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	paths := req.GetStringSlice("paths", nil)
+	all := req.GetBool("all", false)
+
+	if len(paths) == 0 && !all {
+		return mcp.NewToolResultError("paths or all is required"), nil
+	}
+
+	argv := []string{"git", "add"}
+	if all {
+		argv = append(argv, "-A")
+	}
+	argv = append(argv, "--")
+	for _, path := range paths {
+		rel, err := t.relPath(path)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		argv = append(argv, rel)
+	}
+
+	return t.run(ctx, "git_add", argv)
+}
+
+func (t *gitTools) gitCommit(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	message, err := req.RequireString("message")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	all := req.GetBool("all", false)
+
+	argv := []string{"git", "commit", "--no-verify"}
+	if all {
+		argv = append(argv, "-a")
+	}
+	argv = append(argv, "-m", message)
+
+	return t.run(ctx, "git_commit", argv)
+}
+
+func (t *gitTools) gitSwitch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	branch, err := req.RequireString("branch")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	create := req.GetBool("create", false)
+
+	if err := validateRef(branch); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// git rejects "-c --end-of-options <branch>" ("fatal: invalid reference"):
+	// with -c the new branch name must directly follow it, so
+	// --end-of-options moves after the branch instead of before it.
+	var argv []string
+	if create {
+		argv = []string{"git", "switch", "-c", branch, "--end-of-options"}
+	} else {
+		argv = []string{"git", "switch", "--end-of-options", branch}
+	}
+
+	return t.run(ctx, "git_switch", argv)
+}
+
+func (t *gitTools) gitRestore(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	paths, err := req.RequireStringSlice("paths")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	staged := req.GetBool("staged", false)
+
+	argv := []string{"git", "restore"}
+	if staged {
+		argv = append(argv, "--staged")
+	}
+	argv = append(argv, "--")
+	for _, path := range paths {
+		rel, err := t.relPath(path)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		argv = append(argv, rel)
+	}
+
+	return t.run(ctx, "git_restore", argv)
+}
+
+func (t *gitTools) gitStash(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	action, err := req.RequireString("action")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	message := req.GetString("message", "")
+
+	var argv []string
+	switch action {
+	case "push":
+		argv = []string{"git", "stash", "push"}
+		if message != "" {
+			argv = append(argv, "-m", message)
+		}
+	case "pop":
+		argv = []string{"git", "stash", "pop"}
+	case "drop":
+		argv = []string{"git", "stash", "drop"}
+	default:
+		return mcp.NewToolResultError(fmt.Sprintf("invalid action %q", action)), nil
+	}
+
+	return t.run(ctx, "git_stash", argv)
 }

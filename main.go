@@ -89,8 +89,11 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("workspace: %w", err)
 		}
-		newFSTools(ws, cfg.Security.MaxOutputSize, false, log).register(s)
-		newGitTools(ws, executor, false, log).register(s)
+		if cfg.Security.WritesEnabled {
+			log.Warn().Msg("writes_enabled: file and git write tools are exposed")
+		}
+		newFSTools(ws, cfg.Security.MaxOutputSize, cfg.Security.WritesEnabled, log).register(s)
+		newGitTools(ws, executor, cfg.Security.WritesEnabled, log).register(s)
 	}
 
 	shellTool := mcp.NewTool(
