@@ -149,16 +149,27 @@ var gitAllowedSubcommands = newStringSet(
 	"show-branch",
 )
 
-// gitDeniedFlag reports flags that are dangerous under any allowed subcommand:
-// --output (diff/log/show write to an arbitrary file), --ext-diff (runs
-// diff.external), --open-files-in-pager (runs the pager as a command),
-// --contents (blame reads an arbitrary file into the output), and --textconv
-// (cat-file/blame/log run a repo-configured textconv program). All are long
-// forms, so an exact/prefix name test suffices - git does not bundle these.
+// gitDeniedFlags are dangerous under any allowed subcommand: --output
+// (diff/log/show write to an arbitrary file), --ext-diff (runs diff.external),
+// --open-files-in-pager (runs the pager as a command), --contents (blame reads
+// an arbitrary file into the output), and --textconv (cat-file/blame/log run a
+// repo-configured textconv program). All are long forms, so git never bundles
+// them; but parse-options accepts any unambiguous prefix of a long option
+// (--cont is --contents), so gitDeniedFlag matches by prefix and fails closed
+// on every prefix, ambiguous or not.
+var gitDeniedFlags = []string{
+	"--output", "--open-files-in-pager", "--ext-diff", "--contents", "--textconv",
+}
+
 func gitDeniedFlag(tok string) bool {
-	switch longFlagName(tok) {
-	case "--output", "--open-files-in-pager", "--ext-diff", "--contents", "--textconv":
-		return true
+	name := longFlagName(tok)
+	if !strings.HasPrefix(name, "--") || len(name) == 2 {
+		return false
+	}
+	for _, denied := range gitDeniedFlags {
+		if strings.HasPrefix(denied, name) {
+			return true
+		}
 	}
 	return false
 }
@@ -186,7 +197,7 @@ func (*gitArgPolicy) check(argv []string) error {
 			return fmt.Errorf("git: %q is not allowed in secure mode", a)
 		}
 		if isFlagToken(a) && gitDeniedFlag(a) {
-			return fmt.Errorf("git: %q is not allowed in secure mode", a)
+			return fmt.Errorf("git: %q is not allowed in secure mode (matches a denied option or an abbreviation of one)", a)
 		}
 	}
 	return nil
