@@ -307,12 +307,15 @@ func secureChildEnv(executable string) []string {
 // gitHardeningFlags are server-supplied -c overrides inserted right after the
 // git executable. core.fsmonitor runs an arbitrary program during
 // status/diff/ls-files and is disabled here; core.pager runs its value as a
-// command and is pinned to cat. The git argument policy rejects caller-supplied
-// -c, so these cannot be spoofed. Repo config an -c override cannot neutralise
+// command and is pinned to cat; core.hooksPath runs arbitrary programs on
+// checkout/commit/etc and is pinned to /dev/null so a hostile repository's
+// hooks never execute. The git argument policy rejects caller-supplied -c, so
+// these cannot be spoofed. Repo config an -c override cannot neutralise
 // (diff.external, per-path textconv drivers) is handled per-subcommand below.
 var gitHardeningFlags = []string{
 	"-c", "core.fsmonitor=false",
 	"-c", "core.pager=cat",
+	"-c", "core.hooksPath=/dev/null",
 }
 
 // gitDiffSuppressionFlags maps a git subcommand that can run a repo-configured

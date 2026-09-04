@@ -374,3 +374,18 @@ func TestCommandExecutor_run(t *testing.T) {
 		})
 	}
 }
+
+func TestGitHardeningFlags(t *testing.T) {
+	t.Parallel()
+
+	hardened := hardenGitArgv([]string{"git", "status"})
+
+	found := false
+	for i := 0; i < len(hardened)-1; i++ {
+		if hardened[i] == "-c" && hardened[i+1] == "core.hooksPath=/dev/null" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected -c core.hooksPath=/dev/null in %v", hardened)
+}

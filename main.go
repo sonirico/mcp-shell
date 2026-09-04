@@ -90,6 +90,7 @@ func run() error {
 			return fmt.Errorf("workspace: %w", err)
 		}
 		newFSTools(ws, cfg.Security.MaxOutputSize, false, log).register(s)
+		newGitTools(ws, executor, false, log).register(s)
 	}
 
 	shellTool := mcp.NewTool(
