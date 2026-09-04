@@ -36,6 +36,73 @@ func (e *CommandExecutor) execute(
 	command string,
 	useBase64 bool,
 ) (*ExecutionResult, error) {
+	if e.config.UseShellExecution {
+		return e.runShell(ctx, command, useBase64)
+	}
+
+	res := e.unfurler.unfurl(command)
+	if !res.Allowed {
+		return nil, fmt.Errorf("command parsing failed: %s", res.Reason)
+	}
+
+	return e.run(ctx, res.Argv, useBase64)
+}
+
+// run execs argv[0] directly, never parsing a string into a shell. git
+// invocations get the hardening -c overrides inserted first.
+func (e *CommandExecutor) run(
+	ctx context.Context,
+	argv []string,
+	useBase64 bool,
+) (*ExecutionResult, error) {
+	start := time.Now()
+	label := strings.Join(argv, " ")
+
+	e.logger.Info().
+		Str("command", label).
+		Bool("base64", useBase64).
+		Msg("Executing command")
+
+	timeout := 30 * time.Second
+	if e.config.MaxExecutionTime > 0 {
+		timeout = e.config.MaxExecutionTime
+	}
+	cmdCtx, cancelTimeout := context.WithTimeout(ctx, timeout)
+	defer cancelTimeout()
+
+	// A cancellable context lets a capped output buffer stop the child the moment
+	// it overflows, instead of letting it fill memory until MaxExecutionTime.
+	cmdCtx, cancel := context.WithCancel(cmdCtx)
+	defer cancel()
+
+	execArgv := argv
+	if filepath.Base(argv[0]) == "git" {
+		execArgv = hardenGitArgv(argv)
+	}
+
+	e.logger.Debug().
+		Str("executable", execArgv[0]).
+		Strs("args", execArgv[1:]).
+		Msg("Executing command with direct execution")
+
+	cmd := exec.CommandContext(cmdCtx, execArgv[0], execArgv[1:]...)
+	cmd.Env = secureChildEnv(execArgv[0])
+
+	result, err := e.runCommand(cmd, cancel, label, useBase64)
+	if err != nil {
+		return nil, err
+	}
+
+	return e.finish(start, result, label), nil
+}
+
+// runShell execs bash -c command, interpreting shell metacharacters. It is
+// the legacy execution mode and inherits the server's own environment.
+func (e *CommandExecutor) runShell(
+	ctx context.Context,
+	command string,
+	useBase64 bool,
+) (*ExecutionResult, error) {
 	start := time.Now()
 
 	e.logger.Info().
@@ -47,78 +114,37 @@ func (e *CommandExecutor) execute(
 	if e.config.MaxExecutionTime > 0 {
 		timeout = e.config.MaxExecutionTime
 	}
+	cmdCtx, cancelTimeout := context.WithTimeout(ctx, timeout)
+	defer cancelTimeout()
 
-	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	// A cancellable context lets a capped output buffer stop the child the moment
+	// it overflows, instead of letting it fill memory until MaxExecutionTime.
+	cmdCtx, cancel := context.WithCancel(cmdCtx)
 	defer cancel()
 
-	result, err := e.executeSecureCommand(cmdCtx, command, useBase64)
+	e.logger.Warn().
+		Str("command", command).
+		Msg("Using legacy shell execution mode - vulnerable to injection attacks")
+	cmd := exec.CommandContext(cmdCtx, "bash", "-c", command)
+
+	result, err := e.runCommand(cmd, cancel, command, useBase64)
 	if err != nil {
 		return nil, err
 	}
 
-	result.ExecutionTime = time.Since(start)
-	result.SecurityInfo = &SecurityInfo{
-		SecurityEnabled: e.config.Enabled,
-		TimeoutApplied:  true,
-	}
-
-	if e.config.WorkingDirectory != "" {
-		result.SecurityInfo.WorkingDir = e.config.WorkingDirectory
-	}
-	if e.config.RunAsUser != "" {
-		result.SecurityInfo.RunAsUser = e.config.RunAsUser
-	}
-
-	e.logger.Info().
-		Str("command", command).
-		Str("status", result.Status).
-		Int("exit_code", result.ExitCode).
-		Dur("execution_time", result.ExecutionTime).
-		Msg("Command execution completed")
-
-	return result, nil
+	return e.finish(start, result, command), nil
 }
 
-func (e *CommandExecutor) executeSecureCommand(
-	ctx context.Context,
+// runCommand applies the shared process setup - working directory, run-as
+// user, capped output buffers, execution and exit-code/status mapping - to a
+// prepared *exec.Cmd. cancel is the cmd's own context cancel func, used to
+// stop the child promptly on output overflow.
+func (e *CommandExecutor) runCommand(
+	cmd *exec.Cmd,
+	cancel context.CancelFunc,
 	command string,
 	useBase64 bool,
 ) (*ExecutionResult, error) {
-	// A cancellable context lets a capped output buffer stop the child the moment
-	// it overflows, instead of letting it fill memory until MaxExecutionTime.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var cmd *exec.Cmd
-
-	// Use secure execution unless legacy shell mode is explicitly enabled
-	if e.config.UseShellExecution {
-		e.logger.Warn().
-			Str("command", command).
-			Msg("Using legacy shell execution mode - vulnerable to injection attacks")
-		cmd = exec.CommandContext(ctx, "bash", "-c", command)
-	} else {
-		// Secure execution: parse the command into a literal argv and execute it
-		// directly, using the same unfurler the validator used.
-		res := e.unfurler.unfurl(command)
-		if !res.Allowed {
-			return nil, fmt.Errorf("command parsing failed: %s", res.Reason)
-		}
-
-		argv := res.Argv
-		if filepath.Base(argv[0]) == "git" {
-			argv = hardenGitArgv(argv)
-		}
-
-		e.logger.Debug().
-			Str("executable", argv[0]).
-			Strs("args", argv[1:]).
-			Msg("Executing command with direct execution")
-
-		cmd = exec.CommandContext(ctx, argv[0], argv[1:]...)
-		cmd.Env = secureChildEnv(argv[0])
-	}
-
 	if e.config.WorkingDirectory != "" {
 		if err := os.MkdirAll(e.config.WorkingDirectory, 0o755); err != nil {
 			return nil, fmt.Errorf("create working directory %q: %w", e.config.WorkingDirectory, err)
@@ -196,6 +222,32 @@ func (e *CommandExecutor) executeSecureCommand(
 		Stderr:   stderr,
 		Command:  command,
 	}, nil
+}
+
+// finish applies the execution time, SecurityInfo and completion log shared
+// by run and runShell to a successfully produced result.
+func (e *CommandExecutor) finish(start time.Time, result *ExecutionResult, label string) *ExecutionResult {
+	result.ExecutionTime = time.Since(start)
+	result.SecurityInfo = &SecurityInfo{
+		SecurityEnabled: e.config.Enabled,
+		TimeoutApplied:  true,
+	}
+
+	if e.config.WorkingDirectory != "" {
+		result.SecurityInfo.WorkingDir = e.config.WorkingDirectory
+	}
+	if e.config.RunAsUser != "" {
+		result.SecurityInfo.RunAsUser = e.config.RunAsUser
+	}
+
+	e.logger.Info().
+		Str("command", label).
+		Str("status", result.Status).
+		Int("exit_code", result.ExitCode).
+		Dur("execution_time", result.ExecutionTime).
+		Msg("Command execution completed")
+
+	return result
 }
 
 // cappedBuffer collects command output up to max bytes. On the first write that

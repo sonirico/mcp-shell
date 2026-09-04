@@ -72,7 +72,7 @@ func TestCommandExecutor_executeSecureCommand_secure_vs_legacy(t *testing.T) {
 			}
 			executor := newCommandExecutor(config, logger)
 
-			result, err := executor.executeSecureCommand(ctx, tt.command, false)
+			result, err := executor.execute(ctx, tt.command, false)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -141,7 +141,7 @@ func TestCommandExecutor_vulnerability_prevention(t *testing.T) {
 
 		for _, vt := range vulnerabilityTests {
 			t.Run(vt.name, func(t *testing.T) {
-				_, err := executor.executeSecureCommand(ctx, vt.command, false)
+				_, err := executor.execute(ctx, vt.command, false)
 				assert.Error(t, err, "Secure execution should block: %s", vt.description)
 			})
 		}
@@ -169,7 +169,7 @@ func TestCommandExecutor_vulnerability_prevention(t *testing.T) {
 
 		for _, mt := range metaTests {
 			t.Run(mt.name, func(t *testing.T) {
-				result, err := executor.executeSecureCommand(ctx, mt.command, false)
+				result, err := executor.execute(ctx, mt.command, false)
 				require.NoError(t, err)
 				require.NotNil(t, result)
 				assert.Equal(t, "success", result.Status)
@@ -190,7 +190,7 @@ func TestCommandExecutor_childEnvIsMinimal(t *testing.T) {
 	config := SecurityConfig{MaxExecutionTime: 5 * time.Second}
 	executor := newCommandExecutor(config, logger)
 
-	result, err := executor.executeSecureCommand(ctx, "env", false)
+	result, err := executor.execute(ctx, "env", false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.NotContains(t, result.Stdout, "leaked-secret-value")
@@ -240,7 +240,7 @@ func TestCommandExecutor_gitRepoConfigIsNeutralised(t *testing.T) {
 	for _, command := range []string{"git status", "git diff", "git show", "git log -p"} {
 		t.Run(command, func(t *testing.T) {
 			require.NoError(t, os.RemoveAll(sentinel))
-			_, err := executor.executeSecureCommand(ctx, command, false)
+			_, err := executor.execute(ctx, command, false)
 			require.NoError(t, err)
 			assert.NoFileExists(t, sentinel, "%q must not run a repo-configured program", command)
 		})
@@ -248,7 +248,7 @@ func TestCommandExecutor_gitRepoConfigIsNeutralised(t *testing.T) {
 
 	// The hardening must not break ordinary read-only output.
 	t.Run("git log --oneline still works", func(t *testing.T) {
-		result, err := executor.executeSecureCommand(ctx, "git log --oneline", false)
+		result, err := executor.execute(ctx, "git log --oneline", false)
 		require.NoError(t, err)
 		assert.Equal(t, "success", result.Status)
 		assert.Contains(t, result.Stdout, "second")
@@ -263,7 +263,7 @@ func TestCommandExecutor_outputCapStopsRunawayOutput(t *testing.T) {
 	executor := newCommandExecutor(config, logger)
 
 	start := time.Now()
-	_, err := executor.executeSecureCommand(ctx, "cat /dev/zero", false)
+	_, err := executor.execute(ctx, "cat /dev/zero", false)
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
@@ -284,7 +284,7 @@ func TestCommandExecutor_failsClosedOnSetupErrors(t *testing.T) {
 		}
 		executor := newCommandExecutor(config, logger)
 
-		_, err := executor.executeSecureCommand(ctx, "echo hi", false)
+		_, err := executor.execute(ctx, "echo hi", false)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "resolve run-as user")
@@ -300,7 +300,7 @@ func TestCommandExecutor_failsClosedOnSetupErrors(t *testing.T) {
 		}
 		executor := newCommandExecutor(config, logger)
 
-		_, err := executor.executeSecureCommand(ctx, "echo hi", false)
+		_, err := executor.execute(ctx, "echo hi", false)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "create working directory")
@@ -313,9 +313,64 @@ func TestCommandExecutor_failsClosedOnSetupErrors(t *testing.T) {
 		}
 		executor := newCommandExecutor(config, logger)
 
-		_, err := executor.executeSecureCommand(ctx, "echo hello", false)
+		_, err := executor.execute(ctx, "echo hello", false)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "exceeds maximum size limit")
 	})
+}
+
+func TestCommandExecutor_run(t *testing.T) {
+	logger := zerolog.New(zerolog.NewTestWriter(t))
+	ctx := context.Background()
+
+	tests := []struct {
+		name         string
+		argv         []string
+		expectStdout string
+		expectExit   int
+		expectStatus string
+		expectCmd    string
+	}{
+		{
+			name:         "simple command",
+			argv:         []string{"echo", "hi"},
+			expectStdout: "hi",
+			expectExit:   0,
+			expectStatus: "success",
+			expectCmd:    "echo hi",
+		},
+		{
+			name:         "nonzero exit code",
+			argv:         []string{"sh", "-c", "exit 3"},
+			expectStdout: "",
+			expectExit:   3,
+			expectStatus: "error",
+			expectCmd:    "sh -c exit 3",
+		},
+		{
+			name:         "shell metacharacters not interpreted",
+			argv:         []string{"echo", "a;", "echo", "b"},
+			expectStdout: "a; echo b",
+			expectExit:   0,
+			expectStatus: "success",
+			expectCmd:    "echo a; echo b",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := SecurityConfig{MaxExecutionTime: time.Second * 5}
+			executor := newCommandExecutor(config, logger)
+
+			result, err := executor.run(ctx, tt.argv, false)
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, tt.expectStdout, result.Stdout)
+			assert.Equal(t, tt.expectExit, result.ExitCode)
+			assert.Equal(t, tt.expectStatus, result.Status)
+			assert.Equal(t, tt.expectCmd, result.Command)
+		})
+	}
 }
