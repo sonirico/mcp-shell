@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1](https://github.com/sonirico/mcp-shell/compare/v0.8.0...v0.8.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **security:** deny abbreviated forms of denied git long options ([743791c](https://github.com/sonirico/mcp-shell/commit/743791c27351df9cc126271ded1916fb85021979))
+* **security:** deny abbreviated forms of denied git long options ([d205560](https://github.com/sonirico/mcp-shell/commit/d2055602d78548c7634e3dddf22ee81e41e29193))
+
 ## [0.8.0](https://github.com/sonirico/mcp-shell/compare/v0.7.2...v0.8.0) (2026-08-27)
 
 
