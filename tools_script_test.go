@@ -70,6 +70,31 @@ func TestScriptTools(t *testing.T) {
 		assert.Contains(t, textContent.Text, "ok")
 	})
 
+	t.Run("run_script missing name", func(t *testing.T) {
+		t.Parallel()
+		s := newTestScriptServer(t, scripts)
+
+		res := callTool(t, s, "run_script", map[string]any{})
+
+		require.True(t, res.IsError)
+		textContent, ok := res.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, textContent.Text, "name")
+	})
+
+	t.Run("run_script executor error", func(t *testing.T) {
+		t.Parallel()
+		s := newTestScriptServer(t, map[string][]string{
+			"badbin": {"/nonexistent/definitely-not-a-binary"},
+		})
+
+		res := callTool(t, s, "run_script", map[string]any{"name": "badbin"})
+
+		require.True(t, res.IsError)
+		_, ok := res.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+	})
+
 	t.Run("empty scripts registers no tool", func(t *testing.T) {
 		t.Parallel()
 		s := newTestScriptServer(t, map[string][]string{})
