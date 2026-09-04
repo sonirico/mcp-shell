@@ -130,3 +130,26 @@ func TestNewWorkspace(t *testing.T) {
 		assert.Equal(t, resolved, ws.root)
 	})
 }
+
+func TestWorkspace_resolveSymlinkLoop(t *testing.T) {
+	t.Parallel()
+	ws := newTestWorkspace(t)
+
+	a := filepath.Join(ws.root, "a")
+	b := filepath.Join(ws.root, "b")
+	require.NoError(t, os.Symlink(b, a))
+	require.NoError(t, os.Symlink(a, b))
+
+	_, err := ws.resolve("a")
+
+	require.Error(t, err)
+}
+
+func TestResolveSymlinks_nonexistentAncestorsToRoot(t *testing.T) {
+	t.Parallel()
+
+	got, err := resolveSymlinks("/definitely-nonexistent-xyz-mcpshell/foo/bar")
+
+	require.NoError(t, err)
+	assert.Equal(t, "/definitely-nonexistent-xyz-mcpshell/foo/bar", got)
+}

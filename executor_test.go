@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"testing"
 	"time"
@@ -388,4 +389,25 @@ func TestGitHardeningFlags(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected -c core.hooksPath=/dev/null in %v", hardened)
+}
+
+func TestCommandExecutor_finish_setsRunAsUserOnSecurityInfo(t *testing.T) {
+	logger := zerolog.New(zerolog.NewTestWriter(t))
+	ctx := context.Background()
+
+	current, err := user.Current()
+	require.NoError(t, err)
+
+	config := SecurityConfig{
+		RunAsUser:        current.Username,
+		MaxExecutionTime: time.Second * 5,
+	}
+	executor := newCommandExecutor(config, logger)
+
+	result, err := executor.execute(ctx, "echo hi", false)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.SecurityInfo)
+	assert.Equal(t, current.Username, result.SecurityInfo.RunAsUser)
 }

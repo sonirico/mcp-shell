@@ -346,3 +346,262 @@ func TestGitTools(t *testing.T) {
 		}
 	})
 }
+
+func requireErrorText(t *testing.T, res *mcp.CallToolResult, contains string) {
+	t.Helper()
+	require.True(t, res.IsError)
+	textContent, ok := res.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, textContent.Text, contains)
+}
+
+func TestGitTools_validateRefEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty ref is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_log", map[string]any{"ref": ""})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+
+	t.Run("ref with control character is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_log", map[string]any{"ref": "foo\tbar"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+}
+
+func TestGitTools_runExitCodeError(t *testing.T) {
+	t.Parallel()
+	s, _ := newTestGitServer(t)
+
+	res := callTool(t, s, "git_rev_parse", map[string]any{"ref": "deadbeef0000000000000000000000000000000000"})
+
+	requireErrorText(t, res, "exit")
+}
+
+func TestGitTools_runSetupError(t *testing.T) {
+	t.Parallel()
+	ws := newTestRepo(t)
+	executor := newCommandExecutor(SecurityConfig{
+		Enabled:          true,
+		WorkingDirectory: ws.root,
+		RunAsUser:        "nonexistent-mcpshell-test-user",
+		MaxExecutionTime: 30 * time.Second,
+	}, zerolog.Nop())
+
+	s := server.NewMCPServer("t", "0")
+	newGitTools(ws, executor, false, zerolog.Nop()).register(s)
+
+	res := callTool(t, s, "git_status", map[string]any{})
+
+	require.True(t, res.IsError)
+}
+
+func TestGitTools_gitLogAllFilters(t *testing.T) {
+	t.Parallel()
+	s, _ := newTestGitServer(t)
+
+	res := callTool(t, s, "git_log", map[string]any{
+		"author": "t",
+		"grep":   "second",
+		"since":  "2000-01-01",
+		"until":  "2099-01-01",
+		"follow": true,
+		"path":   "a.txt",
+	})
+
+	require.False(t, res.IsError)
+	text := resultText(t, res)
+	assert.Contains(t, text, "second")
+}
+
+func TestGitTools_gitDiffVariants(t *testing.T) {
+	t.Parallel()
+
+	t.Run("invalid ref rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_diff", map[string]any{"ref": "-x"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+
+	t.Run("invalid ref_to rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_diff", map[string]any{"ref": "HEAD", "ref_to": "-x"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+
+	t.Run("stat_only succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_diff", map[string]any{"ref": "HEAD~1", "ref_to": "HEAD", "stat_only": true})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("staged succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_diff", map[string]any{"staged": true})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("valid path succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_diff", map[string]any{"ref": "HEAD~1", "ref_to": "HEAD", "path": "b.txt"})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("escaping path rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_diff", map[string]any{"path": "../x"})
+
+		requireErrorText(t, res, "escapes")
+	})
+}
+
+func TestGitTools_gitShowVariants(t *testing.T) {
+	t.Parallel()
+
+	t.Run("escaping path with default stat_only rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_show", map[string]any{"path": "../x"})
+
+		requireErrorText(t, res, "escapes")
+	})
+
+	t.Run("stat_only alone succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_show", map[string]any{"stat_only": true})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("path with stat_only and valid path succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_show", map[string]any{"path": "a.txt", "stat_only": true})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("path with stat_only and escaping path rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_show", map[string]any{"path": "../x", "stat_only": true})
+
+		requireErrorText(t, res, "escapes")
+	})
+}
+
+func TestGitTools_gitBlameErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing path rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_blame", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("invalid ref rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_blame", map[string]any{"path": "a.txt", "ref": "-x"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+}
+
+func TestGitTools_gitBranchesFlags(t *testing.T) {
+	t.Parallel()
+
+	t.Run("all succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_branches", map[string]any{"all": true})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("merged succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_branches", map[string]any{"merged": true})
+
+		require.False(t, res.IsError)
+	})
+}
+
+func TestGitTools_gitTagsPattern(t *testing.T) {
+	t.Parallel()
+
+	t.Run("invalid pattern rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_tags", map[string]any{"pattern": "-x"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+
+	t.Run("valid pattern succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t)
+
+		res := callTool(t, s, "git_tags", map[string]any{"pattern": "v*"})
+
+		require.False(t, res.IsError)
+	})
+}
+
+func TestGitTools_gitRevParseMissingRef(t *testing.T) {
+	t.Parallel()
+	s, _ := newTestGitServer(t)
+
+	res := callTool(t, s, "git_rev_parse", map[string]any{})
+
+	require.True(t, res.IsError)
+}
+
+func TestGitTools_gitLsFilesValidPath(t *testing.T) {
+	t.Parallel()
+	s, _ := newTestGitServer(t)
+
+	res := callTool(t, s, "git_ls_files", map[string]any{"path": "a.txt"})
+
+	require.False(t, res.IsError)
+	text := resultText(t, res)
+	assert.Contains(t, text, "a.txt")
+}
