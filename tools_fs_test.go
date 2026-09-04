@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -284,5 +287,406 @@ func TestFSTools(t *testing.T) {
 		for _, name := range names {
 			assert.Contains(t, tools, name)
 		}
+	})
+
+	t.Run("required argument missing", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t)
+
+		tests := []struct {
+			label string
+			tool  string
+			args  map[string]any
+		}{
+			{"read_file", "read_file", map[string]any{}},
+			{"glob", "glob", map[string]any{}},
+			{"grep", "grep", map[string]any{}},
+			{"stat", "stat", map[string]any{}},
+			{"diff_files missing path_a", "diff_files", map[string]any{"path_b": "a.txt"}},
+			{"diff_files missing path_b", "diff_files", map[string]any{"path_a": "a.txt"}},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.label, func(t *testing.T) {
+				t.Parallel()
+				res := callTool(t, s, tc.tool, tc.args)
+
+				assert.True(t, res.IsError)
+			})
+		}
+	})
+
+	t.Run("read_file offset and limit clamp out of range", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t)
+
+		tests := []struct {
+			label string
+			args  map[string]any
+			want  string
+		}{
+			{"tail larger than file", map[string]any{"path": "a.txt", "tail": 100}, "     1\tl1\n     2\tl2\n     3\tl3"},
+			{"offset zero clamps to start", map[string]any{"path": "a.txt", "offset": 0}, "     1\tl1\n     2\tl2\n     3\tl3"},
+			{"offset past end yields nothing", map[string]any{"path": "a.txt", "offset": 100}, ""},
+			{"limit past end clamps to file length", map[string]any{"path": "a.txt", "offset": 2, "limit": 100}, "     2\tl2\n     3\tl3"},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.label, func(t *testing.T) {
+				t.Parallel()
+				res := callTool(t, s, "read_file", tc.args)
+
+				assert.Equal(t, tc.want, resultText(t, res))
+			})
+		}
+	})
+
+	t.Run("read_file nonexistent path errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t)
+
+		res := callTool(t, s, "read_file", map[string]any{"path": "missing.txt"})
+
+		assert.True(t, res.IsError)
+	})
+
+	t.Run("list_dir nonexistent path errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t)
+
+		res := callTool(t, s, "list_dir", map[string]any{"path": "missing"})
+
+		assert.True(t, res.IsError)
+	})
+
+	t.Run("list_dir skips hidden directories", func(t *testing.T) {
+		t.Parallel()
+		ws := newTestWorkspace(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(ws.root, ".hiddendir"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, ".hiddendir", "f.txt"), []byte("x"), 0o644))
+
+		s := server.NewMCPServer("t", "0")
+		newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+		res := callTool(t, s, "list_dir", map[string]any{"depth": 3})
+
+		text := resultText(t, res)
+		assert.NotContains(t, text, "hiddendir")
+	})
+
+	t.Run("list_dir skips .git even with hidden entries included", func(t *testing.T) {
+		t.Parallel()
+		ws := newTestWorkspace(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(ws.root, ".git"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, ".git", "config"), []byte("x"), 0o644))
+
+		s := server.NewMCPServer("t", "0")
+		newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+		res := callTool(t, s, "list_dir", map[string]any{"depth": 3, "include_hidden": true})
+
+		text := resultText(t, res)
+		assert.NotContains(t, text, "config")
+	})
+
+	t.Run("list_dir skips directories beyond depth", func(t *testing.T) {
+		t.Parallel()
+		ws := newTestWorkspace(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(ws.root, "sub", "inner"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "sub", "inner", "f.txt"), []byte("x"), 0o644))
+
+		s := server.NewMCPServer("t", "0")
+		newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+		res := callTool(t, s, "list_dir", map[string]any{"depth": 1})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "sub\t")
+		assert.NotContains(t, text, "inner")
+	})
+
+	t.Run("list_dir reports symlinks", func(t *testing.T) {
+		t.Parallel()
+		ws := newTestWorkspace(t)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "target.txt"), []byte("x"), 0o644))
+		require.NoError(t, os.Symlink(filepath.Join(ws.root, "target.txt"), filepath.Join(ws.root, "link.txt")))
+
+		s := server.NewMCPServer("t", "0")
+		newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+		res := callTool(t, s, "list_dir", map[string]any{})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "link.txt\tl\t")
+	})
+
+	t.Run("glob filters", func(t *testing.T) {
+		t.Parallel()
+		ws := newTestWorkspace(t)
+
+		writeAt := func(rel string, mtime time.Time) {
+			p := filepath.Join(ws.root, rel)
+			require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+			require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
+			require.NoError(t, os.Chtimes(p, mtime, mtime))
+		}
+		now := time.Now()
+		writeAt("old.txt", now.Add(-2*time.Hour))
+		writeAt("new.txt", now)
+		writeAt(".git/inside.txt", now)
+
+		s := server.NewMCPServer("t", "0")
+		newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+		t.Run("newer_than excludes stale matches", func(t *testing.T) {
+			t.Parallel()
+			res := callTool(t, s, "glob", map[string]any{"pattern": "*.txt", "newer_than": "1h"})
+
+			text := resultText(t, res)
+			assert.Contains(t, text, "new.txt")
+			assert.NotContains(t, text, "old.txt")
+		})
+
+		t.Run("newer_than invalid duration errors", func(t *testing.T) {
+			t.Parallel()
+			res := callTool(t, s, "glob", map[string]any{"pattern": "*.txt", "newer_than": "bogus"})
+
+			assert.True(t, res.IsError)
+		})
+
+		t.Run("invalid pattern errors", func(t *testing.T) {
+			t.Parallel()
+			res := callTool(t, s, "glob", map[string]any{"pattern": "["})
+
+			assert.True(t, res.IsError)
+		})
+
+		t.Run("skips matches under .git", func(t *testing.T) {
+			t.Parallel()
+			res := callTool(t, s, "glob", map[string]any{"pattern": "**/*.txt"})
+
+			text := resultText(t, res)
+			assert.NotContains(t, text, ".git")
+		})
+
+		t.Run("max_results truncates", func(t *testing.T) {
+			t.Parallel()
+			res := callTool(t, s, "glob", map[string]any{"pattern": "*.txt", "max_results": 1})
+
+			text := resultText(t, res)
+			assert.Len(t, strings.Split(text, "\n"), 1)
+		})
+	})
+
+	t.Run("glob broken symlink errors", func(t *testing.T) {
+		t.Parallel()
+		ws := newTestWorkspace(t)
+		require.NoError(t, os.Symlink(
+			filepath.Join(ws.root, "missing-target"),
+			filepath.Join(ws.root, "broken.txt"),
+		))
+
+		s := server.NewMCPServer("t", "0")
+		newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+		res := callTool(t, s, "glob", map[string]any{"pattern": "*.txt"})
+
+		assert.True(t, res.IsError)
+	})
+
+	t.Run("grep edge cases", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("invalid regex errors", func(t *testing.T) {
+			t.Parallel()
+			s, _ := newTestFSServer(t)
+			res := callTool(t, s, "grep", map[string]any{"pattern": "("})
+
+			assert.True(t, res.IsError)
+		})
+
+		t.Run("nonexistent path errors", func(t *testing.T) {
+			t.Parallel()
+			s, _ := newTestFSServer(t)
+			res := callTool(t, s, "grep", map[string]any{"pattern": "x", "path": "missing"})
+
+			assert.True(t, res.IsError)
+		})
+
+		t.Run("skips .git and honours glob filter", func(t *testing.T) {
+			t.Parallel()
+			ws := newTestWorkspace(t)
+			require.NoError(t, os.WriteFile(filepath.Join(ws.root, "regular.txt"), []byte("MATCH\n"), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(ws.root, "other.go"), []byte("MATCH\n"), 0o644))
+			require.NoError(t, os.MkdirAll(filepath.Join(ws.root, ".git"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(ws.root, ".git", "hidden.txt"), []byte("MATCH\n"), 0o644))
+
+			s := server.NewMCPServer("t", "0")
+			newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+			res := callTool(t, s, "grep", map[string]any{"pattern": "MATCH", "glob": "*.txt"})
+
+			text := resultText(t, res)
+			assert.Contains(t, text, "regular.txt")
+			assert.NotContains(t, text, ".git")
+			assert.NotContains(t, text, "other.go")
+		})
+
+		t.Run("invalid glob filter errors", func(t *testing.T) {
+			t.Parallel()
+			s, _ := newTestFSServer(t)
+			res := callTool(t, s, "grep", map[string]any{"pattern": "x", "glob": "["})
+
+			assert.True(t, res.IsError)
+		})
+
+		t.Run("context clamps and separates non-contiguous matches", func(t *testing.T) {
+			t.Parallel()
+			ws := newTestWorkspace(t)
+			require.NoError(t, os.WriteFile(
+				filepath.Join(ws.root, "ctx.txt"),
+				[]byte("MATCH\nMATCH\nplain\nplain\nplain\nMATCH\n"),
+				0o644,
+			))
+
+			s := server.NewMCPServer("t", "0")
+			newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+			res := callTool(t, s, "grep", map[string]any{"pattern": "MATCH", "context": 1})
+
+			text := resultText(t, res)
+			assert.Contains(t, text, "--")
+			assert.Equal(t, 1, strings.Count(text, "--"))
+		})
+
+		t.Run("max_results stops within and across files", func(t *testing.T) {
+			t.Parallel()
+			ws := newTestWorkspace(t)
+			require.NoError(t, os.WriteFile(filepath.Join(ws.root, "many.txt"), []byte("M\nM\nM\n"), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(ws.root, "other.txt"), []byte("M\n"), 0o644))
+
+			s := server.NewMCPServer("t", "0")
+			newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+			res := callTool(t, s, "grep", map[string]any{"pattern": "M", "max_results": 2})
+
+			text := resultText(t, res)
+			assert.NotContains(t, text, "other.txt")
+			assert.Equal(t, 2, strings.Count(text, "many.txt"))
+		})
+
+		t.Run("unreadable file errors", func(t *testing.T) {
+			if os.Geteuid() == 0 {
+				t.Skip("root ignores file permissions")
+			}
+			t.Parallel()
+			ws := newTestWorkspace(t)
+			p := filepath.Join(ws.root, "secret.txt")
+			require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
+			require.NoError(t, os.Chmod(p, 0o000))
+			t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
+
+			s := server.NewMCPServer("t", "0")
+			newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+			res := callTool(t, s, "grep", map[string]any{"pattern": "x"})
+
+			assert.True(t, res.IsError)
+		})
+	})
+
+	t.Run("stat nonexistent path errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t)
+
+		res := callTool(t, s, "stat", map[string]any{"path": "missing.txt"})
+
+		assert.True(t, res.IsError)
+	})
+
+	t.Run("stat directory", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t)
+
+		res := callTool(t, s, "stat", map[string]any{"path": "sub"})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "type: dir")
+	})
+
+	t.Run("stat unreadable file errors", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root ignores file permissions")
+		}
+		t.Parallel()
+		ws := newTestWorkspace(t)
+		p := filepath.Join(ws.root, "secret.txt")
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
+		require.NoError(t, os.Chmod(p, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
+
+		s := server.NewMCPServer("t", "0")
+		newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+		res := callTool(t, s, "stat", map[string]any{"path": "secret.txt"})
+
+		assert.True(t, res.IsError)
+	})
+
+	t.Run("diff_files path_b escape is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t)
+
+		res := callTool(t, s, "diff_files", map[string]any{"path_a": "a.txt", "path_b": "../x"})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("diff_files nonexistent paths error", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t)
+
+		tests := []struct {
+			label string
+			args  map[string]any
+		}{
+			{"path_a missing", map[string]any{"path_a": "missing.txt", "path_b": "a.txt"}},
+			{"path_b missing", map[string]any{"path_a": "a.txt", "path_b": "missing.txt"}},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.label, func(t *testing.T) {
+				t.Parallel()
+				res := callTool(t, s, "diff_files", tc.args)
+
+				assert.True(t, res.IsError)
+			})
+		}
+	})
+
+	t.Run("system_info finds enclosing git root", func(t *testing.T) {
+		t.Parallel()
+		ws := newTestWorkspace(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(ws.root, ".git"), 0o755))
+
+		s := server.NewMCPServer("t", "0")
+		newFSTools(ws, 0, false, zerolog.Nop()).register(s)
+
+		res := callTool(t, s, "system_info", map[string]any{})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "git_root: "+ws.root)
+	})
+}
+
+func TestIsBinary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("clean input longer than the sniff window is not binary", func(t *testing.T) {
+		t.Parallel()
+
+		data := bytes.Repeat([]byte("a"), binarySniffLen+100)
+
+		assert.False(t, isBinary(data))
 	})
 }
