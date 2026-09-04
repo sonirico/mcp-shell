@@ -1,12 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,15 +23,6 @@ func TestLoadConfig_defaults(t *testing.T) {
 
 	// Secure mode is the built-in default, no config file required.
 	assert.True(t, config.Security.Enabled)
-	assert.False(t, config.Security.UseShellExecution)
-	assert.NotEmpty(t, config.Security.AllowedExecutables)
-	// Every default allowlist entry is classified as safe, so the built-in
-	// config never ships an executable that secure mode would then reject.
-	validator := newSecurityValidator(config.Security, zerolog.Nop())
-	for _, exe := range config.Security.AllowedExecutables {
-		assert.True(t, validator.isClassifiedExecutable(exe),
-			"default allowlist entry %q must be data-only or policy-governed", exe)
-	}
 	assert.Equal(t, "mcp-shell 🐚", config.Server.Name)
 	assert.Equal(t, "info", config.Logging.Level)
 	assert.Equal(t, "console", config.Logging.Format)
@@ -77,11 +68,6 @@ func TestLoadSecurityFromFile(t *testing.T) {
 			yamlContent: `
 security:
   enabled: true
-  use_shell_execution: false
-  allowed_executables:
-    - "ls"
-    - "echo"
-    - "/usr/bin/git"
   max_execution_time: "10s"
   working_directory: "/tmp"
   run_as_user: "nobody"
@@ -91,41 +77,11 @@ security:
 			expectError: false,
 			validateConfig: func(t *testing.T, config *Config) {
 				assert.True(t, config.Security.Enabled)
-				assert.False(t, config.Security.UseShellExecution)
-				assert.Equal(t, []string{"ls", "echo", "/usr/bin/git"}, config.Security.AllowedExecutables)
 				assert.Equal(t, 10*time.Second, config.Security.MaxExecutionTime)
 				assert.Equal(t, "/tmp", config.Security.WorkingDirectory)
 				assert.Equal(t, "nobody", config.Security.RunAsUser)
 				assert.Equal(t, 2048, config.Security.MaxOutputSize)
 				assert.True(t, config.Security.AuditLog)
-			},
-		},
-		{
-			name: "legacy configuration",
-			yamlContent: `
-security:
-  enabled: true
-  use_shell_execution: true
-  allowed_commands:
-    - "echo"
-    - "ls"
-  blocked_commands:
-    - "rm"
-    - "chmod"
-  blocked_patterns:
-    - "rm\\s+-rf"
-  max_execution_time: "30s"
-  audit_log: false
-`,
-			expectError: false,
-			validateConfig: func(t *testing.T, config *Config) {
-				assert.True(t, config.Security.Enabled)
-				assert.True(t, config.Security.UseShellExecution)
-				assert.Equal(t, []string{"echo", "ls"}, config.Security.AllowedCommands)
-				assert.Equal(t, []string{"rm", "chmod"}, config.Security.BlockedCommands)
-				assert.Equal(t, []string{"rm\\s+-rf"}, config.Security.BlockedPatterns)
-				assert.Equal(t, 30*time.Second, config.Security.MaxExecutionTime)
-				assert.False(t, config.Security.AuditLog)
 			},
 		},
 		{
@@ -210,6 +166,36 @@ security:
 	}
 }
 
+func TestLoadSecurityFromFile_removedKeys(t *testing.T) {
+	removedKeys := []struct {
+		key   string
+		value string
+	}{
+		{"use_shell_execution", "false"},
+		{"allowed_executables", `["ls"]`},
+		{"allowed_commands", `["ls"]`},
+		{"blocked_commands", `["rm"]`},
+		{"blocked_patterns", `["rm\\s+-rf"]`},
+	}
+
+	for _, rk := range removedKeys {
+		t.Run(rk.key, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configFile := filepath.Join(tmpDir, "security.yaml")
+			yamlContent := fmt.Sprintf("security:\n  enabled: true\n  %s: %s\n", rk.key, rk.value)
+			require.NoError(t, os.WriteFile(configFile, []byte(yamlContent), 0o644))
+
+			t.Setenv("MCP_SHELL_SEC_CONFIG_FILE", configFile)
+
+			_, err := loadConfig()
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "removed in 1.0.0")
+			assert.Contains(t, err.Error(), rk.key)
+		})
+	}
+}
+
 func TestLoadSecurityFromFile_failsClosed(t *testing.T) {
 	writeConfig := func(t *testing.T, yamlContent string) {
 		tmpDir := t.TempDir()
@@ -220,12 +206,12 @@ func TestLoadSecurityFromFile_failsClosed(t *testing.T) {
 	}
 
 	t.Run("omitted enabled keeps secure defaults", func(t *testing.T) {
-		// A file that only narrows the allowlist must not silently disable
-		// security: absent keys keep their secure defaults, not zero values.
+		// A file that only narrows the working directory must not silently
+		// disable security: absent keys keep their secure defaults, not zero
+		// values.
 		writeConfig(t, `
 security:
-  allowed_executables:
-    - "ls"
+  working_directory: "/tmp"
 `)
 		config, err := loadConfig()
 		require.NoError(t, err)
@@ -239,8 +225,7 @@ security:
 		writeConfig(t, `
 security:
   enabled: false
-  allowed_executables:
-    - "ls"
+  working_directory: "/tmp"
 `)
 		_, err := loadConfig()
 		require.Error(t, err)
@@ -415,81 +400,5 @@ func TestGetEnv_functions(t *testing.T) {
 		// Test with non-existing variable
 		value = getIntEnv("NON_EXISTING_INT", 50)
 		assert.Equal(t, 50, value)
-	})
-}
-
-func TestConfig_security_model_examples(t *testing.T) {
-	t.Run("secure_example_config", func(t *testing.T) {
-		yamlContent := `
-security:
-  enabled: true
-  use_shell_execution: false
-  allowed_executables:
-    - "ls"
-    - "pwd"
-    - "echo"
-    - "cat"
-    - "/usr/bin/git"
-  max_execution_time: "30s"
-  working_directory: "/tmp"
-  audit_log: true
-`
-		tmpDir := t.TempDir()
-		configFile := filepath.Join(tmpDir, "secure.yaml")
-
-		err := os.WriteFile(configFile, []byte(yamlContent), 0644)
-		require.NoError(t, err)
-
-		t.Setenv("MCP_SHELL_SEC_CONFIG_FILE", configFile)
-
-		config, err := loadConfig()
-		require.NoError(t, err)
-
-		// Verify secure configuration
-		assert.True(t, config.Security.Enabled)
-		assert.False(t, config.Security.UseShellExecution)
-		assert.Contains(t, config.Security.AllowedExecutables, "ls")
-		assert.Contains(t, config.Security.AllowedExecutables, "/usr/bin/git")
-		assert.Equal(t, 30*time.Second, config.Security.MaxExecutionTime)
-		assert.Equal(t, "/tmp", config.Security.WorkingDirectory)
-		assert.True(t, config.Security.AuditLog)
-	})
-
-	t.Run("legacy_example_config", func(t *testing.T) {
-		yamlContent := `
-security:
-  enabled: true
-  use_shell_execution: true
-  allowed_commands:
-    - "ls"
-    - "echo"
-  blocked_commands:
-    - "rm"
-    - "chmod"
-    - "sudo"
-  blocked_patterns:
-    - "rm\\s+-rf"
-    - "sudo\\s+"
-  max_execution_time: "30s"
-  audit_log: true
-`
-		tmpDir := t.TempDir()
-		configFile := filepath.Join(tmpDir, "legacy.yaml")
-
-		err := os.WriteFile(configFile, []byte(yamlContent), 0644)
-		require.NoError(t, err)
-
-		t.Setenv("MCP_SHELL_SEC_CONFIG_FILE", configFile)
-
-		config, err := loadConfig()
-		require.NoError(t, err)
-
-		// Verify legacy configuration
-		assert.True(t, config.Security.Enabled)
-		assert.True(t, config.Security.UseShellExecution)
-		assert.Contains(t, config.Security.AllowedCommands, "ls")
-		assert.Contains(t, config.Security.BlockedCommands, "rm")
-		assert.Contains(t, config.Security.BlockedPatterns, "rm\\s+-rf")
-		assert.True(t, config.Security.AuditLog)
 	})
 }

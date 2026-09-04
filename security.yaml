@@ -1,52 +1,19 @@
-# Secure MCP Shell Configuration
-# This configuration uses the new secure execution model that prevents command injection
+# Secure mode (default) exposes typed tools only: file, git and
+# operator-defined scripts. Every path is confined to working_directory.
+# shell_exec exists only when MCP_SHELL_ALLOW_UNSAFE=1 and is unrestricted by
+# design.
 security:
   # Enable security features
   enabled: true
-  
-  # Use secure execution (disable shell interpretation)
-  # This prevents command injection through shell metacharacters
-  use_shell_execution: false
-  
-  # Allowed executables - only these commands can be executed
-  # Use absolute paths for maximum security, or command names for PATH lookup
-  #
-  # WARNING: Never add shell or language interpreters (bash, sh, python, perl,
-  # ruby, node, php) or alias-capable tools (git) to this list. The interpreter
-  # executes whatever it is handed, so allowing one bypasses secure mode
-  # entirely - the metacharacter checks never see the inner command. mcp-shell
-  # logs a warning at startup if it detects one here.
-  # Note: 'find' is allowed but can itself spawn processes via -exec; restrict it
-  # with blocked_patterns if that matters for your threat model.
-  allowed_executables:
-    - "ls"
-    - "pwd"
-    - "whoami"
-    - "date"
-    - "echo"
-    - "cat"
-    - "grep"
-    - "find"
-    - "wc"
-    - "head"
-    - "tail"
-    - "sort"
-    - "uniq"
-  
-  # Legacy settings (deprecated but kept for backwards compatibility)
-  # These are ignored when use_shell_execution is false
-  allowed_commands: []
-  blocked_commands: []
-  blocked_patterns: []
-  
+
   # Execution limits
   max_execution_time: "30s"
   max_output_size: 1048576  # 1MB
-  
+
   # Security context
   working_directory: "/tmp"
   run_as_user: ""  # Leave empty to run as current user
-  
+
   # Logging
   audit_log: true
 

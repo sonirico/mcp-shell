@@ -3,27 +3,23 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/rs/zerolog"
 )
 
 type ShellHandler struct {
-	validator *SecurityValidator
-	executor  *CommandExecutor
-	logger    zerolog.Logger
+	executor *CommandExecutor
+	logger   zerolog.Logger
 }
 
 func newShellHandler(
-	validator *SecurityValidator,
 	executor *CommandExecutor,
 	logger zerolog.Logger,
 ) *ShellHandler {
 	return &ShellHandler{
-		validator: validator,
-		executor:  executor,
-		logger:    logger.With().Str("component", "handler").Logger(),
+		executor: executor,
+		logger:   logger.With().Str("component", "handler").Logger(),
 	}
 }
 
@@ -39,24 +35,9 @@ func (h *ShellHandler) handle(
 
 	h.logger.Info().Str("command", command).Msg("Received shell command request")
 
-	if h.validator.isEnabled() {
-		h.logger.Info().
-			Str("command", command).
-			Str("audit", "command_requested").
-			Msg("Command execution requested")
-	}
-
-	if err := h.validator.validateCommand(command); err != nil {
-		h.logger.Warn().
-			Err(err).
-			Str("command", command).
-			Msg("Security validation failed")
-		return mcp.NewToolResultError(fmt.Sprintf("Security violation: %s", err.Error())), nil
-	}
-
 	useBase64 := request.GetBool("base64", false)
 
-	result, err := h.executor.execute(ctx, command, useBase64)
+	result, err := h.executor.runShell(ctx, command, useBase64)
 	if err != nil {
 		h.logger.Error().
 			Err(err).
@@ -72,10 +53,6 @@ func (h *ShellHandler) handle(
 		"stderr":         result.Stderr,
 		"command":        result.Command,
 		"execution_time": result.ExecutionTime.String(),
-	}
-
-	if result.SecurityInfo != nil {
-		response["security_info"] = result.SecurityInfo
 	}
 
 	jsonBytes, err := json.Marshal(response)

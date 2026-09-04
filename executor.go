@@ -18,34 +18,15 @@ import (
 )
 
 type CommandExecutor struct {
-	config   SecurityConfig
-	logger   zerolog.Logger
-	unfurler *commandUnfurler
+	config SecurityConfig
+	logger zerolog.Logger
 }
 
 func newCommandExecutor(cfg SecurityConfig, logger zerolog.Logger) *CommandExecutor {
 	return &CommandExecutor{
-		config:   cfg,
-		logger:   logger.With().Str("component", "executor").Logger(),
-		unfurler: newCommandUnfurler(),
+		config: cfg,
+		logger: logger.With().Str("component", "executor").Logger(),
 	}
-}
-
-func (e *CommandExecutor) execute(
-	ctx context.Context,
-	command string,
-	useBase64 bool,
-) (*ExecutionResult, error) {
-	if e.config.UseShellExecution {
-		return e.runShell(ctx, command, useBase64)
-	}
-
-	res := e.unfurler.unfurl(command)
-	if !res.Allowed {
-		return nil, fmt.Errorf("command parsing failed: %s", res.Reason)
-	}
-
-	return e.run(ctx, res.Argv, useBase64)
 }
 
 // run execs argv[0] directly, never parsing a string into a shell. git
@@ -224,21 +205,10 @@ func (e *CommandExecutor) runCommand(
 	}, nil
 }
 
-// finish applies the execution time, SecurityInfo and completion log shared
-// by run and runShell to a successfully produced result.
+// finish applies the execution time and completion log shared by run and
+// runShell to a successfully produced result.
 func (e *CommandExecutor) finish(start time.Time, result *ExecutionResult, label string) *ExecutionResult {
 	result.ExecutionTime = time.Since(start)
-	result.SecurityInfo = &SecurityInfo{
-		SecurityEnabled: e.config.Enabled,
-		TimeoutApplied:  true,
-	}
-
-	if e.config.WorkingDirectory != "" {
-		result.SecurityInfo.WorkingDir = e.config.WorkingDirectory
-	}
-	if e.config.RunAsUser != "" {
-		result.SecurityInfo.RunAsUser = e.config.RunAsUser
-	}
 
 	e.logger.Info().
 		Str("command", label).

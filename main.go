@@ -6,6 +6,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/rs/zerolog"
 )
 
 var version = "dev"
@@ -55,28 +56,13 @@ func run() error {
 			Str("working_dir", cfg.Security.WorkingDirectory).
 			Dur("max_execution_time", cfg.Security.MaxExecutionTime).
 			Int("max_output_size", cfg.Security.MaxOutputSize).
-			Int("allowed_commands", len(cfg.Security.AllowedCommands)).
-			Int("blocked_commands", len(cfg.Security.BlockedCommands)).
-			Int("blocked_patterns", len(cfg.Security.BlockedPatterns)).
 			Bool("audit_log", cfg.Security.AuditLog).
+			Bool("writes_enabled", cfg.Security.WritesEnabled).
+			Int("scripts", len(cfg.Security.Scripts)).
 			Msg("Security configuration")
-
-		log.Debug().
-			Strs("allowed_commands", cfg.Security.AllowedCommands).
-			Msg("Allowed commands list")
-
-		log.Debug().
-			Strs("blocked_commands", cfg.Security.BlockedCommands).
-			Msg("Blocked commands list")
-
-		log.Debug().
-			Strs("blocked_patterns", cfg.Security.BlockedPatterns).
-			Msg("Blocked patterns list")
 	}
 
-	validator := newSecurityValidator(cfg.Security, log)
 	executor := newCommandExecutor(cfg.Security, log)
-	shellHandler := newShellHandler(validator, executor, log)
 
 	s := server.NewMCPServer(
 		cfg.Server.Name,
@@ -84,6 +70,20 @@ func run() error {
 		server.WithToolCapabilities(false),
 	)
 
+	if err := registerTools(s, cfg, executor, log); err != nil {
+		return fmt.Errorf("register tools: %w", err)
+	}
+
+	log.Info().Msg("MCP server initialized, serving on stdio")
+
+	if err := server.ServeStdio(s); err != nil {
+		return fmt.Errorf("server error: %w", err)
+	}
+
+	return nil
+}
+
+func registerTools(s *server.MCPServer, cfg *Config, executor *CommandExecutor, log zerolog.Logger) error {
 	if cfg.Security.Enabled {
 		ws, err := newWorkspace(cfg.Security.WorkingDirectory)
 		if err != nil {
@@ -95,12 +95,15 @@ func run() error {
 		newFSTools(ws, cfg.Security.MaxOutputSize, cfg.Security.WritesEnabled, log).register(s)
 		newGitTools(ws, executor, cfg.Security.WritesEnabled, log).register(s)
 		newScriptTools(cfg.Security.Scripts, executor, log).register(s)
+		return nil
 	}
+
+	shellHandler := newShellHandler(executor, log)
 
 	shellTool := mcp.NewTool(
 		"shell_exec",
 		mcp.WithDescription(
-			"Execute shell commands with configurable security constraints. Returns structured JSON with stdout, stderr, exit code and execution metadata.",
+			"UNRESTRICTED: runs the command through bash -c with no validation. Only available with MCP_SHELL_ALLOW_UNSAFE=1.",
 		),
 		mcp.WithString("command",
 			mcp.Required(),
@@ -116,12 +119,6 @@ func run() error {
 	)
 
 	s.AddTool(shellTool, shellHandler.handle)
-
-	log.Info().Msg("MCP server initialized, serving on stdio")
-
-	if err := server.ServeStdio(s); err != nil {
-		return fmt.Errorf("server error: %w", err)
-	}
 
 	return nil
 }
