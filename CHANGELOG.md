@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.0](https://github.com/sonirico/mcp-shell/compare/v0.8.1...v1.0.0) (2026-09-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* replace secure-mode shell_exec with typed tools
+
+### Features
+
+* **paths:** add workspace path confinement ([b398e0d](https://github.com/sonirico/mcp-shell/commit/b398e0d6833e695c360ffba54e4becd91158424f))
+* replace secure-mode shell_exec with typed tools ([cda5814](https://github.com/sonirico/mcp-shell/commit/cda5814e83ccecb222ce9b1292a2dd556e7507e9))
+* **tools:** add file and git write tools behind writes_enabled ([a5cd368](https://github.com/sonirico/mcp-shell/commit/a5cd3687245ea61e92a45c54c76c28d02b0869b5))
+* **tools:** add run_script with operator-defined argv ([ecbbfc0](https://github.com/sonirico/mcp-shell/commit/ecbbfc079c554a02b9c4ae906de8b927a5b233e0))
+* **tools:** add typed read-only filesystem tools ([0426796](https://github.com/sonirico/mcp-shell/commit/0426796284a0daa0774bb51f81ba6e040f3f92d4))
+* **tools:** add typed read-only git tools ([3ab4aea](https://github.com/sonirico/mcp-shell/commit/3ab4aead7a57a2a9169b177f8ee768e02098483b))
+
 ## [0.8.1](https://github.com/sonirico/mcp-shell/compare/v0.8.0...v0.8.1) (2026-09-04)
 
 
