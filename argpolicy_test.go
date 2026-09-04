@@ -247,6 +247,30 @@ func TestPolicySet_check(t *testing.T) {
 			errorContains: "not allowed",
 		},
 		{
+			name:          "git blame --cont abbreviation of --contents blocked",
+			argv:          []string{"git", "blame", "--cont=/etc/passwd", "--", "f"},
+			expectError:   true,
+			errorContains: "abbreviat",
+		},
+		{
+			name:          "git show --out abbreviation of --output blocked",
+			argv:          []string{"git", "show", "--out", "/tmp/pwned"},
+			expectError:   true,
+			errorContains: "abbreviat",
+		},
+		{
+			name:          "git log --ext abbreviation of --ext-diff blocked",
+			argv:          []string{"git", "log", "-p", "--ext"},
+			expectError:   true,
+			errorContains: "abbreviat",
+		},
+		{
+			name:          "git cat-file --textc abbreviation of --textconv blocked",
+			argv:          []string{"git", "cat-file", "--textc", "HEAD:a.txt"},
+			expectError:   true,
+			errorContains: "abbreviat",
+		},
+		{
 			name:          "sort -T tempdir planting blocked",
 			argv:          []string{"sort", "-T", "/etc/cron.d", "f"},
 			expectError:   true,
