@@ -9,5 +9,4 @@ type ExecutionResult struct {
 	Stderr        string        `json:"stderr"`
 	Command       string        `json:"command"`
 	ExecutionTime time.Duration `json:"execution_time"`
-	SecurityInfo  *SecurityInfo `json:"security_info,omitempty"`
 }

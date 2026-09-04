@@ -30,12 +30,13 @@ mcp-shell
 ## Configure it
 
 **Secure mode is the default.** With no config file, `mcp-shell` boots in secure
-mode restricted to a narrow allowlist of read-only utilities (`ls`, `cat`,
-`grep`, `find`, `head`, `tail`, ...). You only need a config file to widen or
-change that policy. To run fully unrestricted you must opt in explicitly:
+mode and registers only typed tools: file reads, `grep`/`glob`, git inspection,
+and (opt-in) file/git writes and operator-defined scripts. There is no raw
+shell command. You only need a config file to change the defaults below. To
+run fully unrestricted you must opt in explicitly:
 
 ```bash
-MCP_SHELL_ALLOW_UNSAFE=true mcp-shell   # disables all validation - do not use in production
+MCP_SHELL_ALLOW_UNSAFE=1 mcp-shell   # disables secure mode; the only tool is shell_exec
 ```
 
 To customize the policy, point to a YAML config:
@@ -45,41 +46,27 @@ export MCP_SHELL_SEC_CONFIG_FILE=/path/to/security.yaml
 mcp-shell
 ```
 
-**Secure mode** (recommended) — no shell interpretation, executable allowlist only:
+**Secure mode** (default) — typed tools only, every path confined to `working_directory`:
 
 ```yaml
 security:
   enabled: true
-  use_shell_execution: false
-  allowed_executables:
-    - ls
-    - cat
-    - grep
-    - find
-    - echo
-  # Allowlisting is necessary but not sufficient: an executable also has to be
-  # classified as safe (a known data-only utility, or governed by an argument
-  # policy like git/find/sort/uniq). Interpreters (bash, python, ...) and
-  # command wrappers (env, timeout, nice, xargs, ...) are unclassified and get
-  # rejected even if listed here; mcp-shell warns at startup about dead entries.
-  blocked_patterns:          # optional: restrict args on allowed commands
-    - '(^|\s)remote\s+(-v|--verbose)(\s|$)'
+  working_directory: /tmp/mcp-workspace
   max_execution_time: 30s
   max_output_size: 1048576
-  working_directory: /tmp/mcp-workspace
+  run_as_user: ""
   audit_log: true
-```
 
-**Legacy mode** — shell execution, allowlist/blocklist by command string (vulnerable to injection if not careful):
+  # Expose file and git write tools (write_file, edit_file, mkdir, move,
+  # delete, git_add, git_commit, git_switch, git_restore, git_stash). Off by
+  # default.
+  writes_enabled: false
 
-```yaml
-security:
-  enabled: true
-  use_shell_execution: true
-  allowed_commands: [ls, cat, grep, echo]
-  blocked_patterns: ['rm\s+-rf', 'sudo\s+']
-  max_execution_time: 30s
-  audit_log: true
+  # Operator-defined scripts exposed through the run_script tool. The client
+  # picks a name; the argv is yours and cannot be altered.
+  # scripts:
+  #   test: ["go", "test", "./..."]
+  #   lint: ["golangci-lint", "run"]
 ```
 
 ---
@@ -111,14 +98,49 @@ For custom config, mount the file and set the env:
 
 ---
 
-## Tool API
+## Tools
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `command` | string | Shell command to run (required) |
-| `base64` | boolean | Encode stdout/stderr as base64 (default: false) |
+Secure mode (the default) registers these typed tools. `*` marks a required
+parameter.
 
-Response includes `status`, `exit_code`, `stdout`, `stderr`, `command`, `execution_time`, and optional `security_info`.
+| Tool | Parameters | Available |
+|------|------------|-----------|
+| `read_file` | path*, offset, limit, tail | always |
+| `list_dir` | path, depth, include_hidden | always |
+| `glob` | pattern*, path, newer_than, max_results | always |
+| `grep` | pattern*, path, glob, ignore_case, context, files_only, count, max_results | always |
+| `stat` | path* | always |
+| `diff_files` | path_a*, path_b* | always |
+| `system_info` | | always |
+| `git_status` | | always |
+| `git_log` | max_count, ref, path, author, grep, since, until, oneline, follow | always |
+| `git_diff` | ref, ref_to, staged, path, stat_only, name_only | always |
+| `git_show` | ref, path, stat_only | always |
+| `git_blame` | path*, ref, line_start, line_end | always |
+| `git_branches` | all, merged | always |
+| `git_tags` | pattern | always |
+| `git_rev_parse` | ref* | always |
+| `git_ls_files` | path, untracked | always |
+| `git_stash_list` | | always |
+| `git_remotes` | | always |
+| `write_file` | path*, content*, append | writes_enabled |
+| `edit_file` | path*, old_string*, new_string*, replace_all | writes_enabled |
+| `mkdir` | path* | writes_enabled |
+| `move` | from*, to* | writes_enabled |
+| `delete` | path*, recursive | writes_enabled |
+| `git_add` | paths, all | writes_enabled |
+| `git_commit` | message*, all | writes_enabled |
+| `git_switch` | branch*, create | writes_enabled |
+| `git_restore` | paths*, staged | writes_enabled |
+| `git_stash` | action*, message | writes_enabled |
+| `run_script` | name* | scripts |
+
+Every path parameter is resolved against `working_directory` (symlinks
+followed); anything outside it is rejected. Git paths and refs are passed
+positionally and validated: a ref starting with `-` is rejected. There are no
+network tools; push, fetch and clone are not offered.
+
+**Unrestricted mode**: `shell_exec` exists only with `MCP_SHELL_ALLOW_UNSAFE=1`, runs the command through `bash -c` with no validation, by design, and it is the only tool registered in that mode.
 
 ---
 
@@ -127,7 +149,7 @@ Response includes `status`, `exit_code`, `stdout`, `stderr`, `command`, `executi
 | Variable | Description |
 |----------|-------------|
 | `MCP_SHELL_SEC_CONFIG_FILE` | Path to security YAML (overrides built-in secure defaults) |
-| `MCP_SHELL_ALLOW_UNSAFE` | Set `true` to disable all validation and run unrestricted (opt-in) |
+| `MCP_SHELL_ALLOW_UNSAFE` | Set `1` (or `true`) to disable secure mode and expose `shell_exec` instead of the typed tools (opt-in) |
 | `MCP_SHELL_SERVER_NAME` | Server name (default: "mcp-shell 🐚") |
 | `MCP_SHELL_LOG_LEVEL` | debug, info, warn, error, fatal |
 | `MCP_SHELL_LOG_FORMAT` | json, console |
@@ -148,12 +170,48 @@ make release            # binary + docker image
 
 ## Security
 
-- **Default**: Secure mode, restricted to a narrow allowlist of read-only utilities. No interpreters.
-- **Secure mode** (`use_shell_execution: false`): the command is parsed into a shell AST and only a single, fully-literal simple command is accepted (no pipes, lists, substitution, redirection or globs); its executable must be on the allowlist **and** be classified as safe: either a known data-only utility (`ls`, `cat`, `grep`, ...) or governed by a deny-by-default argument policy (`git`, `find`, `sort`, `uniq`), where only explicitly safe flags are accepted (`git -c`/`config`, `find -exec`/`-fls`, `sort -o`/`--compress-program` are rejected). Anything unclassified - interpreters, command wrappers like `env`/`timeout`/`xargs`, `tar`, or any other binary - is rejected even when allowlisted. Git is limited to read-only subcommands, run with the diff and textconv drivers suppressed and a minimal environment. The child inherits no server or `.env` secrets. This is an early-reject layer, not a sandbox.
-- **Unrestricted**: Only via `MCP_SHELL_ALLOW_UNSAFE=true`. Full access; fine for local dev, dangerous otherwise.
+- **Default**: Secure mode. The server builds every command's argv itself; the
+  client never supplies a shell string. Only typed tools are registered.
+- **Path confinement**: every path parameter is resolved against
+  `working_directory`, symlinks followed, and anything that resolves outside
+  it is rejected.
+- **Git hardening**: paths are passed after `--`, refs after
+  `--end-of-options`, and a ref starting with `-` is rejected. Git runs with
+  `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `core.fsmonitor`,
+  `core.pager` and `core.hooksPath` neutralised, and `--no-ext-diff
+  --no-textconv` on log/diff/show/blame.
+- **Minimal environment**: child processes get only `PATH`, `HOME` and `LANG`,
+  never the server's own environment or `.env` secrets.
+- **Writes and scripts are opt-in**: `writes_enabled: true` exposes the
+  file/git write tools; a non-empty `scripts` map exposes `run_script`. Both
+  are off by default.
+- **Unrestricted**: only via `MCP_SHELL_ALLOW_UNSAFE=1`. The only tool
+  registered is `shell_exec`, which runs `bash -c` with no validation. Fine
+  for local dev, dangerous otherwise.
 - **Docker**: Runs as non-root, Alpine-based. Use it in production. Best paired with an OS sandbox (read-only FS, dropped caps) as defense-in-depth.
 
 Threat model, guarantees, and the scope for vulnerability reports live in [SECURITY.md](SECURITY.md). Read it before opening an advisory.
+
+---
+
+## Migrating from 0.x
+
+Secure mode no longer validates a `shell_exec` command string; it exposes
+typed tools instead. A config file's `security:` block no longer accepts:
+
+| Removed key | Replacement |
+|-------------|-------------|
+| `use_shell_execution` | not needed; typed tools never shell out |
+| `allowed_executables` | not needed; each tool runs a fixed, server-built argv |
+| `allowed_commands` | not needed; same as above |
+| `blocked_commands` | not needed; same as above |
+| `blocked_patterns` | not needed; same as above |
+
+Loading a config file that still sets one of these fails at startup with an
+error naming the key. There is no more "legacy mode" and no
+`security-legacy.yaml` example. If you need raw shell access, set
+`MCP_SHELL_ALLOW_UNSAFE=1` to get `shell_exec` back; it is no longer
+constrained by the `security:` block at all.
 
 ---
 

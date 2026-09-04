@@ -1,0 +1,857 @@
+package main
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func newTestRepo(t *testing.T) *workspace {
+	t.Helper()
+
+	ws := newTestWorkspace(t)
+
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = ws.root
+		cmd.Env = []string{
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"HOME=" + ws.root,
+			"PATH=" + os.Getenv("PATH"),
+		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+
+	runGit("init", "-q")
+	runGit("config", "user.email", "t@t")
+	runGit("config", "user.name", "t")
+	runGit("config", "commit.gpgsign", "false")
+
+	require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("one\n"), 0o644))
+	runGit("add", "a.txt")
+	runGit("commit", "-q", "-m", "first")
+
+	f, err := os.OpenFile(filepath.Join(ws.root, "a.txt"), os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	_, err = f.WriteString("two\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	require.NoError(t, os.WriteFile(filepath.Join(ws.root, "b.txt"), []byte("b\n"), 0o644))
+	runGit("add", "a.txt", "b.txt")
+	runGit("commit", "-q", "-m", "second")
+
+	return ws
+}
+
+func newTestGitServer(t *testing.T, writesEnabled bool) (*server.MCPServer, *workspace) {
+	t.Helper()
+
+	ws := newTestRepo(t)
+	executor := newCommandExecutor(SecurityConfig{
+		Enabled:          true,
+		WorkingDirectory: ws.root,
+		MaxExecutionTime: 30 * time.Second,
+	}, zerolog.Nop())
+
+	s := server.NewMCPServer("t", "0")
+	newGitTools(ws, executor, writesEnabled, zerolog.Nop()).register(s)
+
+	return s, ws
+}
+
+func TestGitTools(t *testing.T) {
+	t.Parallel()
+
+	t.Run("git_status contains branch header", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_status", map[string]any{})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "# branch.head")
+	})
+
+	t.Run("git_log default contains both commits", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_log", map[string]any{})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "first")
+		assert.Contains(t, text, "second")
+	})
+
+	t.Run("git_log oneline gives exactly 2 lines", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_log", map[string]any{"oneline": true})
+
+		text := resultText(t, res)
+		assert.Len(t, strings.Split(text, "\n"), 2)
+	})
+
+	t.Run("git_log max_count 1 gives 1 line", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_log", map[string]any{"oneline": true, "max_count": 1})
+
+		text := resultText(t, res)
+		assert.Len(t, strings.Split(text, "\n"), 1)
+	})
+
+	t.Run("git_diff ref to ref contains b.txt", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_diff", map[string]any{"ref": "HEAD~1", "ref_to": "HEAD"})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "b.txt")
+	})
+
+	t.Run("git_diff name_only lists b.txt", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_diff", map[string]any{"ref": "HEAD~1", "ref_to": "HEAD", "name_only": true})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "b.txt")
+	})
+
+	t.Run("git_show HEAD contains second", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_show", map[string]any{})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "second")
+	})
+
+	t.Run("git_show ref path returns blob content", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_show", map[string]any{"ref": "HEAD", "path": "a.txt"})
+
+		text := resultText(t, res)
+		assert.Equal(t, "one\ntwo", text)
+	})
+
+	t.Run("git_blame a.txt has 2 lines", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_blame", map[string]any{"path": "a.txt"})
+
+		text := resultText(t, res)
+		assert.Len(t, strings.Split(text, "\n"), 2)
+	})
+
+	t.Run("git_blame line range has 1 line", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_blame", map[string]any{"path": "a.txt", "line_start": 2, "line_end": 2})
+
+		text := resultText(t, res)
+		assert.Len(t, strings.Split(text, "\n"), 1)
+	})
+
+	t.Run("git_branches non-empty", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_branches", map[string]any{})
+
+		text := resultText(t, res)
+		assert.NotEmpty(t, text)
+	})
+
+	t.Run("git_rev_parse HEAD returns 40 hex chars", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_rev_parse", map[string]any{"ref": "HEAD"})
+
+		text := resultText(t, res)
+		assert.Regexp(t, regexp.MustCompile(`^[0-9a-f]{40}$`), text)
+	})
+
+	t.Run("git_ls_files contains both files", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_ls_files", map[string]any{})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "a.txt")
+		assert.Contains(t, text, "b.txt")
+	})
+
+	t.Run("git_ls_files untracked contains c.txt", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, false)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "c.txt"), []byte("c\n"), 0o644))
+
+		res := callTool(t, s, "git_ls_files", map[string]any{"untracked": true})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "c.txt")
+	})
+
+	t.Run("git_stash_list empty", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_stash_list", map[string]any{})
+
+		text := resultText(t, res)
+		assert.Empty(t, text)
+	})
+
+	t.Run("git_remotes empty", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_remotes", map[string]any{})
+
+		text := resultText(t, res)
+		assert.Empty(t, text)
+	})
+
+	t.Run("git_tags contains v1 after tag", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, false)
+		cmd := exec.Command("git", "tag", "v1")
+		cmd.Dir = ws.root
+		cmd.Env = []string{
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"HOME=" + ws.root,
+			"PATH=" + os.Getenv("PATH"),
+		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+
+		res := callTool(t, s, "git_tags", map[string]any{})
+
+		text := resultText(t, res)
+		assert.Contains(t, text, "v1")
+	})
+
+	t.Run("invalid ref is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		tests := []struct {
+			tool string
+			args map[string]any
+		}{
+			{"git_log", map[string]any{"ref": "-x"}},
+			{"git_log", map[string]any{"ref": "--output=/tmp/x"}},
+			{"git_show", map[string]any{"ref": "-x"}},
+			{"git_show", map[string]any{"ref": "--output=/tmp/x"}},
+			{"git_rev_parse", map[string]any{"ref": "-x"}},
+			{"git_rev_parse", map[string]any{"ref": "--output=/tmp/x"}},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.tool, func(t *testing.T) {
+				t.Parallel()
+				res := callTool(t, s, tc.tool, tc.args)
+
+				require.True(t, res.IsError)
+				textContent, ok := res.Content[0].(mcp.TextContent)
+				require.True(t, ok)
+				assert.Contains(t, textContent.Text, "invalid ref")
+			})
+		}
+	})
+
+	t.Run("path escape is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		tests := []struct {
+			tool string
+			args map[string]any
+		}{
+			{"git_log", map[string]any{"path": "../x"}},
+			{"git_blame", map[string]any{"path": "../x"}},
+			{"git_ls_files", map[string]any{"path": "../x"}},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.tool, func(t *testing.T) {
+				t.Parallel()
+				res := callTool(t, s, tc.tool, tc.args)
+
+				require.True(t, res.IsError)
+				textContent, ok := res.Content[0].(mcp.TextContent)
+				require.True(t, ok)
+				assert.Contains(t, textContent.Text, "escapes")
+			})
+		}
+	})
+
+	t.Run("git_log path resembling a flag is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		passwdFirstLine, err := os.ReadFile("/etc/passwd")
+		require.NoError(t, err)
+		firstLine := strings.SplitN(string(passwdFirstLine), "\n", 2)[0]
+
+		res := callTool(t, s, "git_log", map[string]any{"path": "--cont=/etc/passwd"})
+
+		require.True(t, res.IsError)
+		textContent, ok := res.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.NotContains(t, textContent.Text, firstLine)
+	})
+
+	t.Run("registration lists exactly the git tools", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		tools := s.ListTools()
+
+		names := []string{
+			"git_status", "git_log", "git_diff", "git_show", "git_blame",
+			"git_branches", "git_tags", "git_rev_parse", "git_ls_files",
+			"git_stash_list", "git_remotes",
+		}
+		assert.Len(t, tools, len(names))
+		for _, name := range names {
+			assert.Contains(t, tools, name)
+		}
+	})
+}
+
+func requireErrorText(t *testing.T, res *mcp.CallToolResult, contains string) {
+	t.Helper()
+	require.True(t, res.IsError)
+	textContent, ok := res.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, textContent.Text, contains)
+}
+
+func TestGitTools_validateRefEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty ref is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_log", map[string]any{"ref": ""})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+
+	t.Run("ref with control character is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_log", map[string]any{"ref": "foo\tbar"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+}
+
+func TestGitTools_runExitCodeError(t *testing.T) {
+	t.Parallel()
+	s, _ := newTestGitServer(t, false)
+
+	res := callTool(t, s, "git_rev_parse", map[string]any{"ref": "deadbeef0000000000000000000000000000000000"})
+
+	requireErrorText(t, res, "exit")
+}
+
+func TestGitTools_runSetupError(t *testing.T) {
+	t.Parallel()
+	ws := newTestRepo(t)
+	executor := newCommandExecutor(SecurityConfig{
+		Enabled:          true,
+		WorkingDirectory: ws.root,
+		RunAsUser:        "nonexistent-mcpshell-test-user",
+		MaxExecutionTime: 30 * time.Second,
+	}, zerolog.Nop())
+
+	s := server.NewMCPServer("t", "0")
+	newGitTools(ws, executor, false, zerolog.Nop()).register(s)
+
+	res := callTool(t, s, "git_status", map[string]any{})
+
+	require.True(t, res.IsError)
+}
+
+func TestGitTools_gitLogAllFilters(t *testing.T) {
+	t.Parallel()
+	s, _ := newTestGitServer(t, false)
+
+	res := callTool(t, s, "git_log", map[string]any{
+		"author": "t",
+		"grep":   "second",
+		"since":  "2000-01-01",
+		"until":  "2099-01-01",
+		"follow": true,
+		"path":   "a.txt",
+	})
+
+	require.False(t, res.IsError)
+	text := resultText(t, res)
+	assert.Contains(t, text, "second")
+}
+
+func TestGitTools_gitDiffVariants(t *testing.T) {
+	t.Parallel()
+
+	t.Run("invalid ref rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_diff", map[string]any{"ref": "-x"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+
+	t.Run("invalid ref_to rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_diff", map[string]any{"ref": "HEAD", "ref_to": "-x"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+
+	t.Run("stat_only succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_diff", map[string]any{"ref": "HEAD~1", "ref_to": "HEAD", "stat_only": true})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("staged succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_diff", map[string]any{"staged": true})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("valid path succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_diff", map[string]any{"ref": "HEAD~1", "ref_to": "HEAD", "path": "b.txt"})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("escaping path rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_diff", map[string]any{"path": "../x"})
+
+		requireErrorText(t, res, "escapes")
+	})
+}
+
+func TestGitTools_gitShowVariants(t *testing.T) {
+	t.Parallel()
+
+	t.Run("escaping path with default stat_only rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_show", map[string]any{"path": "../x"})
+
+		requireErrorText(t, res, "escapes")
+	})
+
+	t.Run("stat_only alone succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_show", map[string]any{"stat_only": true})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("path with stat_only and valid path succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_show", map[string]any{"path": "a.txt", "stat_only": true})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("path with stat_only and escaping path rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_show", map[string]any{"path": "../x", "stat_only": true})
+
+		requireErrorText(t, res, "escapes")
+	})
+}
+
+func TestGitTools_gitBlameErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing path rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_blame", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("invalid ref rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_blame", map[string]any{"path": "a.txt", "ref": "-x"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+}
+
+func TestGitTools_gitBranchesFlags(t *testing.T) {
+	t.Parallel()
+
+	t.Run("all succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_branches", map[string]any{"all": true})
+
+		require.False(t, res.IsError)
+	})
+
+	t.Run("merged succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_branches", map[string]any{"merged": true})
+
+		require.False(t, res.IsError)
+	})
+}
+
+func TestGitTools_gitTagsPattern(t *testing.T) {
+	t.Parallel()
+
+	t.Run("invalid pattern rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_tags", map[string]any{"pattern": "-x"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+
+	t.Run("valid pattern succeeds", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		res := callTool(t, s, "git_tags", map[string]any{"pattern": "v*"})
+
+		require.False(t, res.IsError)
+	})
+}
+
+func TestGitTools_gitRevParseMissingRef(t *testing.T) {
+	t.Parallel()
+	s, _ := newTestGitServer(t, false)
+
+	res := callTool(t, s, "git_rev_parse", map[string]any{})
+
+	require.True(t, res.IsError)
+}
+
+func TestGitTools_gitLsFilesValidPath(t *testing.T) {
+	t.Parallel()
+	s, _ := newTestGitServer(t, false)
+
+	res := callTool(t, s, "git_ls_files", map[string]any{"path": "a.txt"})
+
+	require.False(t, res.IsError)
+	text := resultText(t, res)
+	assert.Contains(t, text, "a.txt")
+}
+
+func gitOutput(t *testing.T, ws *workspace, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = ws.root
+	cmd.Env = []string{
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"HOME=" + ws.root,
+		"PATH=" + os.Getenv("PATH"),
+	}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	return strings.TrimSpace(string(out))
+}
+
+func TestGitTools_writes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("git_add and git_commit succeed despite a hostile pre-commit hook", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+
+		require.NoError(t, os.MkdirAll(filepath.Join(ws.root, ".git", "hooks"), 0o755))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(ws.root, ".git", "hooks", "pre-commit"),
+			[]byte("#!/bin/sh\nexit 1\n"),
+			0o755,
+		))
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "c.txt"), []byte("c\n"), 0o644))
+
+		res := callTool(t, s, "git_add", map[string]any{"paths": []any{"c.txt"}})
+		require.False(t, res.IsError)
+
+		res = callTool(t, s, "git_commit", map[string]any{"message": "third"})
+		require.False(t, res.IsError)
+
+		assert.Equal(t, "3", gitOutput(t, ws, "rev-list", "--count", "HEAD"))
+	})
+
+	t.Run("git_switch create switches to the new branch", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_switch", map[string]any{"branch": "feat", "create": true})
+		require.False(t, res.IsError)
+
+		assert.Equal(t, "feat", gitOutput(t, ws, "branch", "--show-current"))
+	})
+
+	t.Run("git_restore restores a modified file", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("modified\n"), 0o644))
+
+		res := callTool(t, s, "git_restore", map[string]any{"paths": []any{"a.txt"}})
+		require.False(t, res.IsError)
+
+		data, err := os.ReadFile(filepath.Join(ws.root, "a.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "one\ntwo\n", string(data))
+	})
+
+	t.Run("git_stash push then pop brings back the modification", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("modified\n"), 0o644))
+
+		res := callTool(t, s, "git_stash", map[string]any{"action": "push"})
+		require.False(t, res.IsError)
+
+		data, err := os.ReadFile(filepath.Join(ws.root, "a.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "one\ntwo\n", string(data))
+
+		res = callTool(t, s, "git_stash", map[string]any{"action": "pop"})
+		require.False(t, res.IsError)
+
+		data, err = os.ReadFile(filepath.Join(ws.root, "a.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "modified\n", string(data))
+	})
+
+	t.Run("git_stash invalid action errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_stash", map[string]any{"action": "bogus"})
+
+		requireErrorText(t, res, "invalid action")
+	})
+
+	t.Run("git_switch invalid ref errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_switch", map[string]any{"branch": "-x"})
+
+		requireErrorText(t, res, "invalid ref")
+	})
+
+	t.Run("git_add without paths or all errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_add", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("git_add all stages every change", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "c.txt"), []byte("c\n"), 0o644))
+
+		res := callTool(t, s, "git_add", map[string]any{"all": true})
+		require.False(t, res.IsError)
+
+		assert.Equal(t, "A", gitOutput(t, ws, "status", "--porcelain=v1", "c.txt")[:1])
+	})
+
+	t.Run("git_add path resembling a flag is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_add", map[string]any{"paths": []any{"-x"}})
+
+		requireErrorText(t, res, "resembles a flag")
+	})
+
+	t.Run("git_commit without message errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_commit", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("git_commit all commits unstaged changes", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("modified\n"), 0o644))
+
+		res := callTool(t, s, "git_commit", map[string]any{"message": "third", "all": true})
+		require.False(t, res.IsError)
+
+		assert.Equal(t, "3", gitOutput(t, ws, "rev-list", "--count", "HEAD"))
+	})
+
+	t.Run("git_switch without branch errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_switch", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("git_switch without create switches to an existing branch", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "unused"), []byte("x"), 0o644))
+		cmd := exec.Command("git", "branch", "feat")
+		cmd.Dir = ws.root
+		require.NoError(t, cmd.Run())
+
+		res := callTool(t, s, "git_switch", map[string]any{"branch": "feat"})
+		require.False(t, res.IsError)
+
+		assert.Equal(t, "feat", gitOutput(t, ws, "branch", "--show-current"))
+	})
+
+	t.Run("git_restore without paths errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_restore", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("git_restore staged unstages a change", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("modified\n"), 0o644))
+		cmd := exec.Command("git", "add", "a.txt")
+		cmd.Dir = ws.root
+		require.NoError(t, cmd.Run())
+
+		res := callTool(t, s, "git_restore", map[string]any{"paths": []any{"a.txt"}, "staged": true})
+		require.False(t, res.IsError)
+
+		assert.Equal(t, "M ", gitOutput(t, ws, "status", "--porcelain=v1", "a.txt")[:2])
+	})
+
+	t.Run("git_restore path resembling a flag is rejected", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_restore", map[string]any{"paths": []any{"-x"}})
+
+		requireErrorText(t, res, "resembles a flag")
+	})
+
+	t.Run("git_stash without action errors", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, true)
+
+		res := callTool(t, s, "git_stash", map[string]any{})
+
+		require.True(t, res.IsError)
+	})
+
+	t.Run("git_stash push with message labels the stash", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("modified\n"), 0o644))
+
+		res := callTool(t, s, "git_stash", map[string]any{"action": "push", "message": "wip"})
+		require.False(t, res.IsError)
+
+		assert.Contains(t, gitOutput(t, ws, "stash", "list"), "wip")
+	})
+
+	t.Run("git_stash drop removes the stash", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestGitServer(t, true)
+		require.NoError(t, os.WriteFile(filepath.Join(ws.root, "a.txt"), []byte("modified\n"), 0o644))
+		callTool(t, s, "git_stash", map[string]any{"action": "push"})
+
+		res := callTool(t, s, "git_stash", map[string]any{"action": "drop"})
+		require.False(t, res.IsError)
+
+		assert.Empty(t, gitOutput(t, ws, "stash", "list"))
+	})
+
+	t.Run("write tools are not registered when writes disabled", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestGitServer(t, false)
+
+		tools := s.ListTools()
+
+		for _, name := range []string{"git_add", "git_commit", "git_switch", "git_restore", "git_stash"} {
+			assert.NotContains(t, tools, name)
+		}
+	})
+}
