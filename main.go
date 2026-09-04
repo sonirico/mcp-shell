@@ -84,6 +84,14 @@ func run() error {
 		server.WithToolCapabilities(false),
 	)
 
+	if cfg.Security.Enabled {
+		ws, err := newWorkspace(cfg.Security.WorkingDirectory)
+		if err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		newFSTools(ws, cfg.Security.MaxOutputSize, false, log).register(s)
+	}
+
 	shellTool := mcp.NewTool(
 		"shell_exec",
 		mcp.WithDescription(
