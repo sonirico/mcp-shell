@@ -94,6 +94,7 @@ func run() error {
 		}
 		newFSTools(ws, cfg.Security.MaxOutputSize, cfg.Security.WritesEnabled, log).register(s)
 		newGitTools(ws, executor, cfg.Security.WritesEnabled, log).register(s)
+		newScriptTools(cfg.Security.Scripts, executor, log).register(s)
 	}
 
 	shellTool := mcp.NewTool(

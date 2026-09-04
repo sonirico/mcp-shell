@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -17,18 +18,19 @@ type Config struct {
 }
 
 type SecurityConfig struct {
-	Enabled            bool          `yaml:"enabled"`
-	AllowedCommands    []string      `yaml:"allowed_commands"`    // Deprecated: use AllowedExecutables
-	BlockedCommands    []string      `yaml:"blocked_commands"`    // Deprecated: use validation instead
-	BlockedPatterns    []string      `yaml:"blocked_patterns"`    // Deprecated: use validation instead
-	AllowedExecutables []string      `yaml:"allowed_executables"` // Secure: list of allowed executable paths
-	MaxExecutionTime   time.Duration `yaml:"max_execution_time"`
-	WorkingDirectory   string        `yaml:"working_directory"`
-	RunAsUser          string        `yaml:"run_as_user"`
-	MaxOutputSize      int           `yaml:"max_output_size"`
-	AuditLog           bool          `yaml:"audit_log"`
-	UseShellExecution  bool          `yaml:"use_shell_execution"` // Legacy mode - enables shell execution (DANGEROUS)
-	WritesEnabled      bool          `yaml:"writes_enabled"`
+	Enabled            bool                `yaml:"enabled"`
+	AllowedCommands    []string            `yaml:"allowed_commands"`    // Deprecated: use AllowedExecutables
+	BlockedCommands    []string            `yaml:"blocked_commands"`    // Deprecated: use validation instead
+	BlockedPatterns    []string            `yaml:"blocked_patterns"`    // Deprecated: use validation instead
+	AllowedExecutables []string            `yaml:"allowed_executables"` // Secure: list of allowed executable paths
+	MaxExecutionTime   time.Duration       `yaml:"max_execution_time"`
+	WorkingDirectory   string              `yaml:"working_directory"`
+	RunAsUser          string              `yaml:"run_as_user"`
+	MaxOutputSize      int                 `yaml:"max_output_size"`
+	AuditLog           bool                `yaml:"audit_log"`
+	UseShellExecution  bool                `yaml:"use_shell_execution"` // Legacy mode - enables shell execution (DANGEROUS)
+	WritesEnabled      bool                `yaml:"writes_enabled"`
+	Scripts            map[string][]string `yaml:"scripts"`
 }
 
 type ServerConfig struct {
@@ -114,18 +116,19 @@ func loadSecurityFromFile(config *Config, filename string) error {
 
 	var yamlConfig struct {
 		Security struct {
-			Enabled            bool     `yaml:"enabled"`
-			AllowedCommands    []string `yaml:"allowed_commands"`
-			BlockedCommands    []string `yaml:"blocked_commands"`
-			BlockedPatterns    []string `yaml:"blocked_patterns"`
-			AllowedExecutables []string `yaml:"allowed_executables"`
-			MaxExecutionTime   string   `yaml:"max_execution_time"`
-			WorkingDirectory   string   `yaml:"working_directory"`
-			RunAsUser          string   `yaml:"run_as_user"`
-			MaxOutputSize      int      `yaml:"max_output_size"`
-			AuditLog           bool     `yaml:"audit_log"`
-			UseShellExecution  bool     `yaml:"use_shell_execution"`
-			WritesEnabled      bool     `yaml:"writes_enabled"`
+			Enabled            bool                `yaml:"enabled"`
+			AllowedCommands    []string            `yaml:"allowed_commands"`
+			BlockedCommands    []string            `yaml:"blocked_commands"`
+			BlockedPatterns    []string            `yaml:"blocked_patterns"`
+			AllowedExecutables []string            `yaml:"allowed_executables"`
+			MaxExecutionTime   string              `yaml:"max_execution_time"`
+			WorkingDirectory   string              `yaml:"working_directory"`
+			RunAsUser          string              `yaml:"run_as_user"`
+			MaxOutputSize      int                 `yaml:"max_output_size"`
+			AuditLog           bool                `yaml:"audit_log"`
+			UseShellExecution  bool                `yaml:"use_shell_execution"`
+			WritesEnabled      bool                `yaml:"writes_enabled"`
+			Scripts            map[string][]string `yaml:"scripts"`
 		} `yaml:"security"`
 	}
 
@@ -145,6 +148,7 @@ func loadSecurityFromFile(config *Config, filename string) error {
 	yamlConfig.Security.AuditLog = sec.AuditLog
 	yamlConfig.Security.UseShellExecution = sec.UseShellExecution
 	yamlConfig.Security.WritesEnabled = sec.WritesEnabled
+	yamlConfig.Security.Scripts = sec.Scripts
 
 	if err := yaml.Unmarshal(data, &yamlConfig); err != nil {
 		return err
@@ -161,6 +165,7 @@ func loadSecurityFromFile(config *Config, filename string) error {
 	config.Security.AuditLog = yamlConfig.Security.AuditLog
 	config.Security.UseShellExecution = yamlConfig.Security.UseShellExecution
 	config.Security.WritesEnabled = yamlConfig.Security.WritesEnabled
+	config.Security.Scripts = yamlConfig.Security.Scripts
 
 	if yamlConfig.Security.MaxExecutionTime != "" {
 		duration, err := time.ParseDuration(yamlConfig.Security.MaxExecutionTime)
@@ -185,8 +190,19 @@ func validateConfig(config *Config) error {
 		return fmt.Errorf("invalid log level: %s", config.Logging.Level)
 	}
 
+	for name, argv := range config.Security.Scripts {
+		if !scriptNamePattern.MatchString(name) {
+			return fmt.Errorf("scripts: invalid script %q: name must match ^[a-z0-9_-]+$", name)
+		}
+		if len(argv) == 0 {
+			return fmt.Errorf("scripts: invalid script %q: argv is empty", name)
+		}
+	}
+
 	return nil
 }
+
+var scriptNamePattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {

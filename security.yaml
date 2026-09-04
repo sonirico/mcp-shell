@@ -54,3 +54,9 @@ security:
   # delete, git_add, git_commit, git_switch, git_restore, git_stash). Off by
   # default.
   writes_enabled: false
+
+  # Operator-defined scripts exposed through the run_script tool. The client
+  # picks a name; the argv is yours and cannot be altered.
+  # scripts:
+  #   test: ["go", "test", "./..."]
+  #   lint: ["golangci-lint", "run"]

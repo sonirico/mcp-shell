@@ -152,6 +152,19 @@ security:
 			},
 		},
 		{
+			name: "scripts is loaded",
+			yamlContent: `
+security:
+  enabled: true
+  scripts:
+    test: ["go", "test", "./..."]
+`,
+			expectError: false,
+			validateConfig: func(t *testing.T, config *Config) {
+				assert.Equal(t, map[string][]string{"test": {"go", "test", "./..."}}, config.Security.Scripts)
+			},
+		},
+		{
 			name: "invalid max_execution_time",
 			yamlContent: `
 security:
@@ -291,6 +304,33 @@ func TestValidateConfig(t *testing.T) {
 			expectError: true,
 			errorMsg:    "invalid log level",
 		},
+		{
+			name: "empty script argv",
+			config: Config{
+				Security: SecurityConfig{
+					MaxOutputSize: 1024,
+					Scripts:       map[string][]string{"test": {}},
+				},
+				Logging: LoggingConfig{
+					Level: "info",
+				},
+			},
+			expectError: true,
+			errorMsg:    "argv is empty",
+		},
+		{
+			name: "valid scripts",
+			config: Config{
+				Security: SecurityConfig{
+					MaxOutputSize: 1024,
+					Scripts:       map[string][]string{"test": {"go", "test", "./..."}},
+				},
+				Logging: LoggingConfig{
+					Level: "info",
+				},
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -305,6 +345,24 @@ func TestValidateConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateConfig_invalidScriptName(t *testing.T) {
+	config := Config{
+		Security: SecurityConfig{
+			MaxOutputSize: 1024,
+			Scripts:       map[string][]string{"Bad Name": {"echo", "hi"}},
+		},
+		Logging: LoggingConfig{
+			Level: "info",
+		},
+	}
+
+	err := validateConfig(&config)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "scripts")
+	assert.Contains(t, err.Error(), "Bad Name")
 }
 
 func TestGetEnv_functions(t *testing.T) {
