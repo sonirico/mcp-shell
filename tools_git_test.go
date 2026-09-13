@@ -347,6 +347,43 @@ func TestGitTools(t *testing.T) {
 	})
 }
 
+// TestGitTools_filterDriverRCEBlocked reproduces GHSA-c598-5pxh-5vq3: an
+// untrusted client plants a repo-local git content-filter driver via write_file
+// and then triggers it with the read-only git_diff. Both writes into git's
+// control surface must be refused, so git_diff never runs the driver and no
+// command executes outside the workspace.
+func TestGitTools_filterDriverRCEBlocked(t *testing.T) {
+	t.Parallel()
+
+	ws := newTestRepo(t)
+	canary := filepath.Join(filepath.Dir(ws.root), "pwned")
+	executor := newCommandExecutor(SecurityConfig{
+		Enabled:          true,
+		WorkingDirectory: ws.root,
+		MaxExecutionTime: 30 * time.Second,
+	}, zerolog.Nop())
+
+	s := server.NewMCPServer("t", "0")
+	newFSTools(ws, 0, true, zerolog.Nop()).register(s)
+	newGitTools(ws, executor, true, zerolog.Nop()).register(s)
+
+	attrsRes := callTool(t, s, "write_file", map[string]any{"path": ".gitattributes", "content": "* filter=pwn\n"})
+	requireErrorText(t, attrsRes, "git's control surface")
+
+	cfgRes := callTool(t, s, "write_file", map[string]any{
+		"path":    ".git/config",
+		"content": "[filter \"pwn\"]\n\tclean = \"sh -c 'touch " + canary + "; cat'\"\n",
+		"append":  true,
+	})
+	requireErrorText(t, cfgRes, "git's control surface")
+
+	callTool(t, s, "write_file", map[string]any{"path": "a.txt", "content": "changed\n"})
+	callTool(t, s, "git_diff", map[string]any{})
+
+	_, err := os.Stat(canary)
+	require.True(t, os.IsNotExist(err), "filter driver executed: canary %s was created", canary)
+}
+
 func requireErrorText(t *testing.T, res *mcp.CallToolResult, contains string) {
 	t.Helper()
 	require.True(t, res.IsError)

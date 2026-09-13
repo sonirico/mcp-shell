@@ -99,6 +99,45 @@ func TestWorkspace_resolve(t *testing.T) {
 	})
 }
 
+func TestWorkspace_resolveForWrite(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		name    string
+		rel     string
+		refused bool
+	}
+
+	cases := []testCase{
+		{name: "plain file allowed", rel: "a.txt", refused: false},
+		{name: "nested plain file allowed", rel: "sub/a.txt", refused: false},
+		{name: "gitignore allowed", rel: ".gitignore", refused: false},
+		{name: "top-level git config refused", rel: ".git/config", refused: true},
+		{name: "git hook refused", rel: ".git/hooks/pre-commit", refused: true},
+		{name: "git info attributes refused", rel: ".git/info/attributes", refused: true},
+		{name: "top-level gitattributes refused", rel: ".gitattributes", refused: true},
+		{name: "nested gitattributes refused", rel: "sub/.gitattributes", refused: true},
+		{name: "nested git dir refused", rel: "sub/.git/config", refused: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ws := newTestWorkspace(t)
+
+			got, err := ws.resolveForWrite(tc.rel)
+
+			if tc.refused {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "git's control surface")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, filepath.Join(ws.root, filepath.Clean(tc.rel)), got)
+		})
+	}
+}
+
 func TestNewWorkspace(t *testing.T) {
 	t.Parallel()
 
