@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/sonirico/mcp-shell/compare/v1.0.0...v1.0.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* **security:** reject client writes to git's control surface (GHSA-c598-5pxh-5vq3) ([6bf0b38](https://github.com/sonirico/mcp-shell/commit/6bf0b38))
+
 ## [1.0.0](https://github.com/sonirico/mcp-shell/compare/v0.8.1...v1.0.0) (2026-09-04)
 
 
