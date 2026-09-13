@@ -61,13 +61,20 @@ func (e *CommandExecutor) run(
 		execArgv = hardenGitArgv(argv)
 	}
 
+	// The child env keys off the real target, so compute it before the sandbox
+	// wrapper replaces argv[0] with the server binary.
+	childEnv := secureChildEnv(execArgv[0])
+	if e.config.Sandbox && e.config.WorkingDirectory != "" {
+		execArgv = sandboxWrapArgv(e.config.WorkingDirectory, execArgv)
+	}
+
 	e.logger.Debug().
 		Str("executable", execArgv[0]).
 		Strs("args", execArgv[1:]).
 		Msg("Executing command with direct execution")
 
 	cmd := exec.CommandContext(cmdCtx, execArgv[0], execArgv[1:]...)
-	cmd.Env = secureChildEnv(execArgv[0])
+	cmd.Env = childEnv
 
 	result, err := e.runCommand(cmd, cancel, label, useBase64)
 	if err != nil {

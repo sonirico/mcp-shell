@@ -25,6 +25,7 @@ type SecurityConfig struct {
 	MaxOutputSize    int                 `yaml:"max_output_size"`
 	AuditLog         bool                `yaml:"audit_log"`
 	WritesEnabled    bool                `yaml:"writes_enabled"`
+	Sandbox          bool                `yaml:"sandbox"`
 	Scripts          map[string][]string `yaml:"scripts"`
 }
 
@@ -48,6 +49,7 @@ type LoggingConfig struct {
 func newDefaultSecurityConfig() SecurityConfig {
 	return SecurityConfig{
 		Enabled:          true,
+		Sandbox:          true,
 		MaxExecutionTime: 30 * time.Second,
 		MaxOutputSize:    1048576,
 		WorkingDirectory: "/tmp",
@@ -140,6 +142,7 @@ func loadSecurityFromFile(config *Config, filename string) error {
 			MaxOutputSize    int                 `yaml:"max_output_size"`
 			AuditLog         bool                `yaml:"audit_log"`
 			WritesEnabled    bool                `yaml:"writes_enabled"`
+			Sandbox          bool                `yaml:"sandbox"`
 			Scripts          map[string][]string `yaml:"scripts"`
 		} `yaml:"security"`
 	}
@@ -155,6 +158,7 @@ func loadSecurityFromFile(config *Config, filename string) error {
 	yamlConfig.Security.MaxOutputSize = sec.MaxOutputSize
 	yamlConfig.Security.AuditLog = sec.AuditLog
 	yamlConfig.Security.WritesEnabled = sec.WritesEnabled
+	yamlConfig.Security.Sandbox = sec.Sandbox
 	yamlConfig.Security.Scripts = sec.Scripts
 
 	if err := yaml.Unmarshal(data, &yamlConfig); err != nil {
@@ -167,6 +171,7 @@ func loadSecurityFromFile(config *Config, filename string) error {
 	config.Security.MaxOutputSize = yamlConfig.Security.MaxOutputSize
 	config.Security.AuditLog = yamlConfig.Security.AuditLog
 	config.Security.WritesEnabled = yamlConfig.Security.WritesEnabled
+	config.Security.Sandbox = yamlConfig.Security.Sandbox
 	config.Security.Scripts = yamlConfig.Security.Scripts
 
 	if yamlConfig.Security.MaxExecutionTime != "" {
