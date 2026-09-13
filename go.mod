@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/joho/godotenv v1.5.1
+	github.com/landlock-lsm/go-landlock v0.10.0
 	github.com/mark3labs/mcp-go v0.54.1
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/rs/zerolog v1.35.1
@@ -23,4 +24,5 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
+	kernel.org/pub/linux/libs/security/libcap/psx v1.2.77 // indirect
 )

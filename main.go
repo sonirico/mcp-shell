@@ -12,6 +12,13 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == sandboxArg {
+		if err := runSandboxShim(); err != nil {
+			fmt.Fprintf(os.Stderr, "sandbox: %v\n", err)
+			os.Exit(127)
+		}
+	}
+
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -58,6 +65,7 @@ func run() error {
 			Int("max_output_size", cfg.Security.MaxOutputSize).
 			Bool("audit_log", cfg.Security.AuditLog).
 			Bool("writes_enabled", cfg.Security.WritesEnabled).
+			Bool("sandbox", cfg.Security.Sandbox).
 			Int("scripts", len(cfg.Security.Scripts)).
 			Msg("Security configuration")
 	}
