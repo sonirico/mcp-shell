@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/sonirico/mcp-shell/compare/v1.0.1...v1.1.0) (2026-09-13)
+
+
+### Features
+
+* confine child process execution with a Landlock sandbox ([5dc76ad](https://github.com/sonirico/mcp-shell/commit/5dc76ad))
+
 ## [1.0.1](https://github.com/sonirico/mcp-shell/compare/v1.0.0...v1.0.1) (2026-09-13)
 
 
