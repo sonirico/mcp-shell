@@ -878,6 +878,82 @@ func TestFSTools_writes(t *testing.T) {
 	})
 }
 
+func TestFSTools_gitControlSurface(t *testing.T) {
+	t.Parallel()
+
+	t.Run("write_file refuses git config", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestFSServer(t, true)
+
+		res := callTool(t, s, "write_file", map[string]any{
+			"path":    ".git/config",
+			"content": "[filter \"pwn\"]\n\tclean = touch pwned\n",
+			"append":  true,
+		})
+
+		requireErrorText(t, res, "git's control surface")
+		_, err := os.Stat(filepath.Join(ws.root, ".git", "config"))
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("write_file refuses gitattributes", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, true)
+
+		res := callTool(t, s, "write_file", map[string]any{"path": ".gitattributes", "content": "* filter=pwn\n"})
+
+		requireErrorText(t, res, "git's control surface")
+	})
+
+	t.Run("edit_file refuses git config", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, true)
+
+		res := callTool(t, s, "edit_file", map[string]any{"path": ".git/config", "old_string": "x", "new_string": "y"})
+
+		requireErrorText(t, res, "git's control surface")
+	})
+
+	t.Run("mkdir refuses path inside git dir", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, true)
+
+		res := callTool(t, s, "mkdir", map[string]any{"path": ".git/hooks"})
+
+		requireErrorText(t, res, "git's control surface")
+	})
+
+	t.Run("move refuses git config as destination", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, true)
+
+		res := callTool(t, s, "move", map[string]any{"from": "a.txt", "to": ".git/config"})
+
+		requireErrorText(t, res, "git's control surface")
+	})
+
+	t.Run("delete refuses git config", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newTestFSServer(t, true)
+
+		res := callTool(t, s, "delete", map[string]any{"path": ".git/config"})
+
+		requireErrorText(t, res, "git's control surface")
+	})
+
+	t.Run("gitignore stays writable", func(t *testing.T) {
+		t.Parallel()
+		s, ws := newTestFSServer(t, true)
+
+		res := callTool(t, s, "write_file", map[string]any{"path": ".gitignore", "content": "node_modules\n"})
+
+		require.False(t, res.IsError)
+		data, err := os.ReadFile(filepath.Join(ws.root, ".gitignore"))
+		require.NoError(t, err)
+		assert.Equal(t, "node_modules\n", string(data))
+	})
+}
+
 func TestIsBinary(t *testing.T) {
 	t.Parallel()
 

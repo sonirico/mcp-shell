@@ -53,6 +53,33 @@ func (w *workspace) resolve(rel string) (string, error) {
 	return resolved, nil
 }
 
+// resolveForWrite is resolve plus a refusal to hand back any path inside git's
+// control surface. The .git directory and .gitattributes files change which
+// programs git runs during ordinary read operations (content filters, hooks,
+// aliases, pager, external diff). Those files are the server's to own, not the
+// client's: a client that could write them could turn a read-only git tool such
+// as git_diff into arbitrary command execution. Every mutating filesystem tool
+// resolves through here, so the guarantee holds no matter which tool is called.
+func (w *workspace) resolveForWrite(rel string) (string, error) {
+	abs, err := w.resolve(rel)
+	if err != nil {
+		return "", err
+	}
+
+	within, err := filepath.Rel(w.root, abs)
+	if err != nil {
+		return "", err
+	}
+
+	for _, seg := range strings.Split(within, string(filepath.Separator)) {
+		if seg == ".git" || seg == ".gitattributes" {
+			return "", fmt.Errorf("path %q is inside git's control surface and is not writable", rel)
+		}
+	}
+
+	return abs, nil
+}
+
 func resolveSymlinks(candidate string) (string, error) {
 	ancestor := candidate
 	var suffix []string

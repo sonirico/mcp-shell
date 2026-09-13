@@ -624,7 +624,7 @@ func (t *fsTools) writeFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	}
 	appendMode := req.GetBool("append", false)
 
-	abs, err := t.ws.resolve(path)
+	abs, err := t.ws.resolveForWrite(path)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -673,7 +673,7 @@ func (t *fsTools) editFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 	}
 	replaceAll := req.GetBool("replace_all", false)
 
-	abs, err := t.ws.resolve(path)
+	abs, err := t.ws.resolveForWrite(path)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -717,7 +717,7 @@ func (t *fsTools) mkdir(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	abs, err := t.ws.resolve(path)
+	abs, err := t.ws.resolveForWrite(path)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -743,11 +743,11 @@ func (t *fsTools) move(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	absFrom, err := t.ws.resolve(from)
+	absFrom, err := t.ws.resolveForWrite(from)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	absTo, err := t.ws.resolve(to)
+	absTo, err := t.ws.resolveForWrite(to)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -774,7 +774,7 @@ func (t *fsTools) deletePath(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	}
 	recursive := req.GetBool("recursive", false)
 
-	abs, err := t.ws.resolve(path)
+	abs, err := t.ws.resolveForWrite(path)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
