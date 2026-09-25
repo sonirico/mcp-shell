@@ -118,6 +118,10 @@ func TestWorkspace_resolveForWrite(t *testing.T) {
 		{name: "top-level gitattributes refused", rel: ".gitattributes", refused: true},
 		{name: "nested gitattributes refused", rel: "sub/.gitattributes", refused: true},
 		{name: "nested git dir refused", rel: "sub/.git/config", refused: true},
+		{name: "upper-case git dir refused", rel: ".GIT/config", refused: true},
+		{name: "mixed-case nested git dir refused", rel: "sub/.Git/hooks/pre-commit", refused: true},
+		{name: "upper-case gitattributes refused", rel: ".GITATTRIBUTES", refused: true},
+		{name: "long-s folded gitattributes refused", rel: ".gitattributeſ", refused: true},
 	}
 
 	for _, tc := range cases {

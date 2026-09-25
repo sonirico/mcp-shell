@@ -60,6 +60,8 @@ func (w *workspace) resolve(rel string) (string, error) {
 // client's: a client that could write them could turn a read-only git tool such
 // as git_diff into arbitrary command execution. Every mutating filesystem tool
 // resolves through here, so the guarantee holds no matter which tool is called.
+// Names are compared case-folded: on a case-insensitive filesystem (macOS APFS
+// default) ".GIT" and ".gitattributeſ" open the same files (GHSA-vv99-jjh6-3c8x).
 func (w *workspace) resolveForWrite(rel string) (string, error) {
 	abs, err := w.resolve(rel)
 	if err != nil {
@@ -72,7 +74,7 @@ func (w *workspace) resolveForWrite(rel string) (string, error) {
 	}
 
 	for _, seg := range strings.Split(within, string(filepath.Separator)) {
-		if seg == ".git" || seg == ".gitattributes" {
+		if strings.EqualFold(seg, ".git") || strings.EqualFold(seg, ".gitattributes") {
 			return "", fmt.Errorf("path %q is inside git's control surface and is not writable", rel)
 		}
 	}
