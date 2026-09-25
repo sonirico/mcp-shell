@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/sonirico/mcp-shell/compare/v1.1.0...v1.1.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* case-fold the git control-surface write guard (GHSA-vv99-jjh6-3c8x) ([aa868dc](https://github.com/sonirico/mcp-shell/commit/aa868dc))
+
 ## [1.1.0](https://github.com/sonirico/mcp-shell/compare/v1.0.1...v1.1.0) (2026-09-13)
 
 
